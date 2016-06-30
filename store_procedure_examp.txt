@@ -1,0 +1,3255 @@
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_account_forget_pass_getPinCode`( pUser_contact VARCHAR(100) )
+BEGIN
+		SET @account_id	= COALESCE(( SELECT `id` FROM `account` WHERE `email` = pUser_contact OR `phone` = fn_phone_getSuffixPhone(pUser_contact) ), 0);
+        SET @curr_time	= CURRENT_TIMESTAMP();
+		IF ( @user_id = 0 ) THEN
+			SELECT 0 AS 'result';
+		ELSE
+			SET @pin = FLOOR(7 + RAND() * 1000000);
+        
+			INSERT INTO `account_forget_pass`
+			(
+				`account_id`,
+				`user_contact`,
+				`pin`,
+                `expired_date`
+			)
+			VALUES
+			(
+				@account_id,
+				pUser_contact,
+				@pin,
+                DATE_ADD(@curr_time, INTERVAL + 30 DAY)
+			) ON DUPLICATE KEY UPDATE	`pin`			=	@pin,
+										`user_contact`	=	pUser_contact,
+                                        `updated_date`	=	@curr_time,
+                                        `expired_date`	=	DATE_ADD(@curr_time, INTERVAL + 30 DAY),
+                                        `enable`		=	1;
+            
+            SELECT 1 AS 'result', @pin AS 'pin';
+        END IF;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_account_get_by_manager`( pAccount INT )
+BEGIN
+		CALL sp_role_checkStaffRole( pAccount, '1,2,3,4', @check_role);
+        IF ( @check_role = 1 ) THEN
+			SET @role_id = (SELECT `role_team_id` FROM `account_role` WHERE `account_id` = pAccount);
+			SELECT	acc.`id` AS `account_id`,
+					acc.`username`
+			FROM	`account` acc
+				JOIN	`account_role` acr ON acr.`account_id` = acc.`id`
+				JOIN	`role_team` rt ON rt.`id` = acr.`role_team_id`
+			WHERE	acc.`user_type`			= 0
+				AND rt.`role_manager_id`	= 3;
+		END IF;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_account_insert`( pUsername VARCHAR(100), pPassword VARCHAR(100), pUser_type TINYINT )
+BEGIN
+		INSERT INTO `vietlott`.`account`
+		(
+			`username`,
+			`password`,
+			`user_type`
+		)
+		VALUES
+		(
+			pUsername,
+			pPassword,
+			pUser_type
+		);
+
+        SELECT ROW_COUNT() AS 'result';
+	END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_account_login`( pUsername VARCHAR(100), pPassword VARCHAR(100) )
+BEGIN
+		SET @id = COALESCE(( SELECT `id` FROM `account` WHERE (`username` = pUsername OR `phone` = pUsername) AND `enable` = 1 ), 0);
+        IF ( @id > 0 ) THEN
+			SET @pass = (SELECT `password` FROM `account` WHERE `id` = @id);
+            IF @pass = pPassword THEN
+				SELECT	1 AS `result`,
+						`id` AS `user_id`,
+						`avatar`,
+						`full_name`,
+						`user_type`
+				FROM `account`
+				WHERE (	`username`	= pUsername
+					OR
+						`phone`		= pUsername
+					)
+					AND `password`	= pPassword;
+			ELSE
+				SELECT 0 AS 'result';
+			END IF;
+		ELSE
+			SELECT -1 AS 'result';
+		END IF;
+	END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_account_resetPassword`( pPin VARCHAR(10), pUser_contact VARCHAR(100), pPassword VARCHAR(100) )
+BEGIN
+		SET @account_id	= COALESCE(( SELECT `id` FROM `account` WHERE `email` = pUser_contact OR `phone` = fn_phone_getSuffixPhone(pUser_contact) ), 0);
+        SET @curr_time	= CURRENT_TIMESTAMP();
+		IF ( @user_id = 0 ) THEN
+			SELECT 0 AS 'result';
+		ELSE
+            -- SELECT COALESCE(`pin`, 0), COALESCE(`expired_date`) INTO @pin, @exp_date FROM `user_forget_pass` WHERE `user_id` = @user_id;
+            SET @pin = COALESCE((SELECT `pin` FROM `account_forget_pass` WHERE `account_id` = @account_id), 0);
+            IF @pin = 0 THEN
+				SELECT -3 AS 'result';
+			ELSE
+				IF ( pPin <> '' AND @pin = pPin ) THEN
+					SET @exp_date = (SELECT `expired_date` FROM `account_forget_pass` WHERE `account_id` = @account_id);
+					IF ( CURRENT_TIMESTAMP() > @exp_date ) THEN
+						SELECT -2 AS 'result';
+					ELSE
+						UPDATE	`account_forget_pass`
+                        SET		`pin`		=	'',
+								`enable`	=	0
+                        WHERE	`account_id`=	@account_id;
+                        
+						UPDATE	`account`
+                        SET		`password`	=	pPassword
+                        WHERE	`id`		=	@account_id;
+                        
+						SELECT 1 AS 'result';
+					END IF;
+				ELSE
+					SELECT -1 AS 'result';
+				END IF;
+			END IF;
+        END IF;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_agency_get_by_account`( pAccount INT )
+BEGIN
+		CALL sp_role_checkStaffRole( pAccount, '1,2,3,4', @check_role);
+        IF ( @check_role = 1 ) THEN
+			SELECT	ag.`user_id` AS `agent_id`,
+					ag.`name` AS `agent_name`
+			FROM	`agent` ag
+			WHERE	ag.`staff_id` = pAccount;
+		END IF;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_agent_activeAccount`(  )
+BEGIN
+		
+	END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_agent_fill`( start_date DATE, end_date DATE )
+BEGIN
+		DECLARE crt_date DATE;
+		SET crt_date=start_date;
+		SET @id=0;
+        SET @acc_id = 0;
+		WHILE crt_date < end_date DO
+			INSERT IGNORE INTO `account`
+			(
+				`username`,
+				`password`,
+				`user_type`
+			)
+			VALUES
+			(
+				CONCAT('daily', FLOOR(5 + RAND( ) * 40), FLOOR(5 + RAND( ) * 40)),
+				'e10adc3949ba59abbe56e057f20f883e',
+				1
+			);
+            SET @acc_id = last_insert_id();
+            SET @id = right(@acc_id, 3);
+            
+			insert ignore into `agent`
+			(`name`,`user_id`,`avatar`,`image`,`phone`,`email`,`address`,`city`,`rating`,`state`,`contract_type`,`business_type`,`store_type`,`staff_id`,`latitude`,`longitude`,`enable`,`width`,`height`,`depth`,`ratio`,`has_modem`,`has_power_supply`,`area_type`,`traffic_type`,`flow_type`,`parking_type`,`population_type`,`distance_type`,`landowner_type`,`contract_status`,`registration_status`,`class`,`created_date`,`updated_date`,`active_date`,`registration_date`,`is_online`)
+			values
+			(CONCAT('Đại Lý 00', @id),@acc_id,'','','','','','',0,0,0,0,0,461039815,10.844377,106.64027,'','4m','8m','20m',0.00,'','','Khu Trung tâm buôn bán','Ngã 4','Cao','Có chỗ để xe máy','Khu Công nghiệp','Cách trường học 200m','Chủ sở hữu','Chưa ký','Đã có',1,crt_date,crt_date,crt_date,crt_date,'\0');
+            SET crt_date = ADDDATE(crt_date, INTERVAL 1 DAY);
+		END WHILE;
+	END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_agent_findNearByAgent`( pRadius INT, pLatitude DOUBLE, pLongitude DOUBLE, pOffset INT, pLimit INT )
+BEGIN
+		SET @lat 		=	pLatitude;
+		SET @lon		=	pLongitude;
+
+		SET @lon1 = @lon - pRadius / ABS(COS(RADIANS(@lat)) * 111000);
+		SET @lon2 = @lon + pRadius / ABS(COS(RADIANS(@lat)) * 111000);
+		SET @lat1 = @lat - (pRadius / 111000);
+		SET @lat2 = @lat + (pRadius / 111000);
+
+		SELECT	ag.`id` AS `agent_id`,
+				ag.`name` AS `agent_name`,
+                ag.`user_id`,
+                ROUND( 6371 * ACOS( COS( RADIANS(@lat) ) * COS( RADIANS( ag.`latitude` ) ) * COS( RADIANS( ag.`longitude` ) - RADIANS(@lon) ) + SIN( RADIANS(@lat) ) * SIN( RADIANS( ag.`latitude` ) ) ) * 1000 ) AS `distance`
+		FROM	`agent` ag
+		WHERE	ag.`longitude`	<> 0
+			AND ag.`latitude`	<> 0
+			AND ag.`longitude`	BETWEEN @lon1 AND @lon2
+			AND ag.`latitude`	BETWEEN @lat1 AND @lat2
+            AND ag.`is_online`	= 1
+            AND	ag.`enable`		= 1
+		GROUP BY	ag.`id`
+			HAVING	`distance` <= pRadius
+		ORDER BY	`distance`
+		LIMIT pOffset, pLimit;
+	END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_agent_getAgentById`( pAgent_id INT )
+BEGIN
+		SELECT	`user_id` AS `agent_id`,
+				`name` AS `agent_name`
+		FROM	`agent`
+		WHERE	`user_id`	=	pAgent_id;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_agent_getAgentByName`( pAgent_name VARCHAR(255) )
+BEGIN
+		SET @agent_id = COALESCE((SELECT	`id`
+									FROM	`account`
+									WHERE	`username`	=	pAgent_name
+										AND	`user_type`	>	0), 0);
+		IF ( @agent_id = 0 ) THEN
+			SET @agent_id = COALESCE((SELECT `account`.`id` FROM `account` JOIN `agent` ON `agent`.`user_id` = `account`.`id` WHERE `agent`.`name` = pAgent_name), 0);
+		END IF;
+		SELECT @agent_id AS `agent_id`;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_agent_getAgentDetail`( pStaff_id BIGINT, pAgent_id INT )
+BEGIN
+		SELECT	ag.`id` AS `agent_id`,
+				ag.`name` AS `agent_name`,
+				ag.`image`,
+				ag.`staff_id`,
+                acc.`full_name` AS `staff_name`,
+				ag.`latitude`,
+				ag.`longitude`,
+				ag.`width`,
+				ag.`height`,
+				ag.`depth`,
+				ag.`has_modem`,
+				ag.`has_power_supply`,
+				ag.`area_type`,
+				ag.`traffic_type`,
+				ag.`flow_type`,
+				ag.`parking_type`,
+				ag.`population_type`,
+				ag.`distance_type`,
+				ag.`landowner_type`,
+				ag.`contract_status`,
+				ag.`registration_status`,
+                ag.`created_date`
+		FROM	`agent` ag
+			JOIN	`account` acc ON acc.`id` = ag.`staff_id`
+        WHERE	ag.`id`			=	pAgent_id;
+			-- AND ag.`staff_id`	=	pStaff_id
+			-- AND ag.`enable`		=	1;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_agent_getAgentSummary`( pUser_id INT )
+BEGIN
+		SELECT	ag.`id` AS `agent_id`,
+				ag.`name`,
+				ag.`avatar`,
+				ag.`address`,
+                ag.`phone`,
+                ag.`user_id`
+        FROM	`agent` ag
+        WHERE	ag.`user_id`		=	pUser_id
+			AND	ag.`enable`	=	1;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_agent_getAllAgentByStaff`( pStaff_id BIGINT, pAgent_id BIGINT, pOffset SMALLINT, pLimit SMALLINT )
+BEGIN
+		IF ( pAgent_id = 0 ) THEN
+			SELECT	ag.`id` AS `location_id`,
+					COALESCE(acc.`username`, '') AS `username`,
+					ag.`user_id` AS `agent_id`,
+					ag.`name` AS `agent_name`,
+                    ag.`image`,
+					ag.`created_date`,
+					ag.`area_type`,
+					ag.`traffic_type`,
+                    ag.`flow_type`,
+                    ag.`parking_type`,
+                    ag.`population_type`,
+                    ag.`distance_type`,
+                    ag.`landowner_type`,
+                    COALESCE(agc.`agent_c1_id`, 0) AS `parent_agent_id`,
+                    COALESCE(agc.`agent_c1_name`, 0) AS `parent_agent_name`
+			FROM	`agent` ag
+				LEFT JOIN	`agent_class` agc ON agc.`agent_c2_id` = ag.`user_id`
+                LEFT JOIN	`account` acc ON acc.`id` = ag.`user_id`
+			WHERE	ag.`staff_id` = pStaff_id
+            ORDER BY ag.`id` DESC
+			LIMIT	pOffset, pLimit;
+		ELSE
+			SELECT	ag.`id` AS `location_id`,
+					COALESCE(acc.`username`, '') AS `username`,
+					ag.`user_id` AS `agent_id`,
+					ag.`name` AS `agent_name`,
+                    ag.`image`,
+					ag.`created_date`,
+					ag.`area_type`,
+					ag.`traffic_type`,
+                    ag.`flow_type`,
+                    ag.`parking_type`,
+                    ag.`population_type`,
+                    ag.`distance_type`,
+                    ag.`landowner_type`,
+                    agc.`agent_c1_id` AS `parent_agent_id`,
+                    agc.`agent_c1_name` AS `parent_agent_name`
+			FROM	`agent` ag
+				JOIN	`agent_class` agc ON agc.`agent_c2_id` = ag.`user_id`
+                LEFT JOIN	`account` acc ON acc.`id` = ag.`user_id`
+			WHERE	ag.`class` = 2
+				AND agc.`agent_c1_id` = pAgent_id
+			ORDER BY ag.`id` DESC
+			LIMIT	pOffset, pLimit;
+        END IF;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_agent_getAllAgentByStaffTotal`( pStaff_id BIGINT, pAgent_id BIGINT )
+BEGIN
+		IF ( pAgent_id = 0 ) THEN
+			SELECT	COUNT(*) AS `total`
+			FROM	`agent` ag
+			WHERE	ag.`staff_id` = pStaff_id;
+		ELSE
+			SELECT	COUNT(*) AS `total`
+			FROM	`agent` ag
+				JOIN	`agent_class` agc ON agc.`agent_c2_id` = ag.`user_id`
+			WHERE	ag.`class` = 2
+				AND agc.`agent_c1_id` = pAgent_id;
+        END IF;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_agent_getTopAgent`( pStaff_id BIGINT, pAgent_id INT, pStart_date INT, pEnd_date INT, pOffset INT, pLimit INT )
+BEGIN
+		SET @unit = 10000;
+		IF ( pAgent_id = 0 )  THEN
+			SELECT	ag.`id` AS `agent_id`,
+					ag.`name` AS `agent_name`,
+                    COUNT(agt.`id`)	AS `total_ticket`,
+                    COUNT(agt.`id`) * @unit AS `total_income`
+            FROM	`agent_ticket` agt
+				JOIN	`agent` ag ON ag.`user_id` = agt.`agent_id`
+			WHERE	ag.`staff_id`	= pStaff_id
+				AND	ag.`enable`		= 1
+                AND	UNIX_TIMESTAMP(agt.`created_date`)	BETWEEN	pStart_date	AND pEnd_date
+			GROUP BY ag.`id`
+			ORDER BY `total_ticket` DESC
+            LIMIT pOffset, pLimit;
+		ELSE
+			SELECT	ag.`id` AS `agent_id`,
+					ag.`name` AS `agent_name`,
+                    COUNT(agt.`id`)	AS `total_ticket`,
+                    COUNT(agt.`id`) * @unit AS `total_income`
+            FROM	`agent_ticket` agt
+				JOIN	`agent` ag ON ag.`user_id` = agt.`agent_id`
+                JOIN	`agent_class` agc ON agc.`agent_c2_id` = ag.`user_id`
+			WHERE	ag.`class` = 2
+				AND agc.`agent_c1_id`	=	pAgent_id
+				AND ag.`enable`			=	1
+                AND	UNIX_TIMESTAMP(agt.`created_date`)	BETWEEN	pStart_date	AND pEnd_date
+			GROUP BY ag.`id`
+			ORDER BY `total_ticket` DESC
+            LIMIT pOffset, pLimit;
+        END IF;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_agent_getTotalAgentByDate`( pStaff_id BIGINT, pStart_date INT, pEnd_date INT )
+BEGIN
+		SET @total = (	SELECT	COUNT(ag.`id`)
+						FROM	`agent` ag
+						WHERE	ag.`staff_id`	=	pStaff_id
+							AND ag.`enable`		=	1
+							AND UNIX_TIMESTAMP(ag.`created_date`) BETWEEN pStart_date AND pEnd_date
+					);
+		SET @total_signed = (	SELECT	COUNT(ag.`id`)
+								FROM	`agent` ag
+                                WHERE	ag.`staff_id`			=	pStaff_id
+									AND ag.`contract_status`	=	'Đã ký'
+                                    AND ag.`enable`				=	1
+                                    AND	UNIX_TIMESTAMP(ag.`created_date`) BETWEEN pStart_date AND pEnd_date
+							);
+		SET @total_unsigned = (	SELECT	COUNT(ag.`id`)
+								FROM	`agent` ag
+                                WHERE	ag.`staff_id`			=	pStaff_id
+									AND ag.`contract_status`	=	'Chưa ký'
+                                    AND ag.`enable`				=	1
+									AND	UNIX_TIMESTAMP(ag.`created_date`) BETWEEN pStart_date AND pEnd_date
+							);
+		SELECT @total AS 'total', @total_signed AS 'total_signed', @total_unsigned AS 'total_unsigned';
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_agent_getTotalGrossIncome`( pStaff_id BIGINT, pAgent_id INT, pStart_date INT, pEnd_date INT )
+BEGIN
+		SET @unit = 10000;
+		IF ( pAgent_id = 0 )  THEN
+			SET	@total =	(	SELECT	COUNT(agt.`id`) * @unit AS `total`
+								FROM	`agent_ticket` agt
+									JOIN	`agent` ag ON ag.`user_id` = agt.`agent_id`
+								WHERE	ag.`staff_id`	=	pStaff_id
+									AND ag.`enable`		=	1
+									AND	UNIX_TIMESTAMP(agt.`created_date`)	BETWEEN	pStart_date	AND pEnd_date
+							);
+			SET	@pre_total =	(	SELECT	COUNT(agt.`id`) * @unit AS `total`
+								FROM	`agent_ticket` agt
+									JOIN	`agent` ag ON ag.`user_id` = agt.`agent_id`
+								WHERE	ag.`staff_id`	=	pStaff_id
+									AND ag.`enable`		=	1
+									AND	agt.`created_date`	BETWEEN	FROM_UNIXTIME(DATE_ADD(pStart_date, INTERVAL -30 DAY)) AND FROM_UNIXTIME(DATE_ADD(pEnd_date, INTERVAL -30 DAY))
+							);
+		ELSE
+			SET	@total =	(	SELECT	COUNT(agt.`id`) * @unit AS `total`
+								FROM	`agent_ticket` agt
+									JOIN	`agent` ag ON ag.`user_id` = agt.`agent_id`
+                                    JOIN	`agent_class` agc ON agc.`agent_c2_id` = ag.`user_id`
+								WHERE	ag.`class` = 2
+									AND agc.`agent_c1_id`	=	pAgent_id
+                                    AND ag.`enable`			=	1
+									AND	UNIX_TIMESTAMP(agt.`created_date`)	BETWEEN	pStart_date	AND pEnd_date
+							);
+			SET	@pre_total =	(	SELECT	COUNT(agt.`id`) * @unit AS `total`
+								FROM	`agent_ticket` agt
+									JOIN	`agent` ag ON ag.`user_id` = agt.`agent_id`
+									JOIN	`agent_class` agc ON agc.`agent_c2_id` = ag.`user_id`
+								WHERE	ag.`class` = 2
+									AND agc.`agent_c1_id`	=	pAgent_id
+                                    AND ag.`enable`			=	1
+									AND	agt.`created_date`	BETWEEN	FROM_UNIXTIME(DATE_ADD(pStart_date, INTERVAL -30 DAY)) AND FROM_UNIXTIME(DATE_ADD(pEnd_date, INTERVAL -30 DAY))
+							);
+		END IF;
+		SELECT @total AS 'total', @pre_total AS 'pre_total', COALESCE((( @total - @pre_total ) * 100 / @pre_total), 0) AS 'disparity';
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_agent_getTotalNetIncome`( pStaff_id BIGINT, pAgent_id INT, pStart_date INT, pEnd_date INT )
+BEGIN
+		SET @unit = 10000;
+		IF ( pAgent_id = 0 )  THEN
+			SET	@total =	(	SELECT	COUNT(agt.`id`) * @unit AS `total`
+								FROM	`agent_ticket` agt
+									JOIN	`agent` ag ON ag.`user_id` = agt.`agent_id`
+								WHERE	ag.`staff_id`	=	pStaff_id
+									AND ag.`enable`		=	1
+									AND	UNIX_TIMESTAMP(agt.`created_date`)	BETWEEN	pStart_date	AND pEnd_date
+							);
+			SET	@pre_total =	(	SELECT	COUNT(agt.`id`) * @unit AS `total`
+								FROM	`agent_ticket` agt
+									JOIN	`agent` ag ON ag.`user_id` = agt.`agent_id`
+								WHERE	ag.`staff_id`	=	pStaff_id
+									AND ag.`enable`		=	1
+									AND	agt.`created_date`	BETWEEN	FROM_UNIXTIME(DATE_ADD(pStart_date, INTERVAL -30 DAY)) AND FROM_UNIXTIME(DATE_ADD(pEnd_date, INTERVAL -30 DAY))
+							);
+		ELSE
+			SET	@total =	(	SELECT	COUNT(agt.`id`) * @unit AS `total`
+								FROM	`agent_ticket` agt
+									JOIN	`agent` ag ON ag.`user_id` = agt.`agent_id`
+                                    JOIN	`agent_class` agc ON agc.`agent_c2_id` = ag.`user_id`
+								WHERE	ag.`class` = 2
+									AND agc.`agent_c1_id`	=	pAgent_id
+                                    AND ag.`enable`			=	1
+									AND	UNIX_TIMESTAMP(agt.`created_date`)	BETWEEN	pStart_date	AND pEnd_date
+							);
+			SET	@pre_total =	(	SELECT	COUNT(agt.`id`) * @unit AS `total`
+								FROM	`agent_ticket` agt
+									JOIN	`agent` ag ON ag.`user_id` = agt.`agent_id`
+									JOIN	`agent_class` agc ON agc.`agent_c2_id` = ag.`user_id`
+								WHERE	ag.`class` = 2
+									AND agc.`agent_c1_id`	=	pAgent_id
+                                    AND ag.`enable`			=	1
+									AND	agt.`created_date`	BETWEEN	FROM_UNIXTIME(DATE_ADD(pStart_date, INTERVAL -30 DAY)) AND FROM_UNIXTIME(DATE_ADD(pEnd_date, INTERVAL -30 DAY))
+							);
+		END IF;
+		SELECT @total AS 'total', @pre_total AS 'pre_total', COALESCE((( @total - @pre_total ) * 100 / @pre_total), 0) AS 'disparity';
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_agent_getTotalTicketSold`( pStaff_id BIGINT, pAgent_id INT, pStart_date INT, pEnd_date INT )
+BEGIN
+		IF ( pAgent_id = 0 )  THEN
+			SET	@total =	(	SELECT	COUNT(agt.`id`) AS `total`
+								FROM	`agent_ticket` agt
+									JOIN	`agent` ag ON ag.`user_id` = agt.`agent_id`
+								WHERE	ag.`staff_id`	=	pStaff_id
+									AND ag.`enable`		=	1
+									AND	UNIX_TIMESTAMP(agt.`created_date`)	BETWEEN	pStart_date	AND pEnd_date
+							);
+			SET	@pre_total =	(	SELECT	COUNT(agt.`id`) AS `total`
+								FROM	`agent_ticket` agt
+									JOIN	`agent` ag ON ag.`user_id` = agt.`agent_id`
+								WHERE	ag.`staff_id`	=	pStaff_id
+									AND ag.`enable`		=	1
+									AND	agt.`created_date`	BETWEEN	FROM_UNIXTIME(DATE_ADD(pStart_date, INTERVAL -30 DAY)) AND FROM_UNIXTIME(DATE_ADD(pEnd_date, INTERVAL -30 DAY))
+							);
+		ELSE
+			SET	@total =	(	SELECT	COUNT(agt.`id`) AS `total`
+								FROM	`agent_ticket` agt
+									JOIN	`agent` ag ON ag.`user_id` = agt.`agent_id`
+                                    JOIN	`agent_class` agc ON agc.`agent_c2_id` = ag.`user_id`
+								WHERE	ag.`class` = 2
+									AND agc.`agent_c1_id`	=	pAgent_id
+                                    AND ag.`enable`			=	1
+									AND	UNIX_TIMESTAMP(agt.`created_date`)	BETWEEN	pStart_date	AND pEnd_date
+							);
+			SET	@pre_total =	(	SELECT	COUNT(agt.`id`) AS `total`
+								FROM	`agent_ticket` agt
+									JOIN	`agent` ag ON ag.`user_id` = agt.`agent_id`
+									JOIN	`agent_class` agc ON agc.`agent_c2_id` = ag.`user_id`
+								WHERE	ag.`class` = 2
+									AND agc.`agent_c1_id`	=	pAgent_id
+                                    AND ag.`enable`			=	1
+									AND	agt.`created_date`	BETWEEN	FROM_UNIXTIME(DATE_ADD(pStart_date, INTERVAL -30 DAY)) AND FROM_UNIXTIME(DATE_ADD(pEnd_date, INTERVAL -30 DAY))
+							);
+		END IF;
+		SELECT @total AS 'total', @pre_total AS 'pre_total', COALESCE((( @total - @pre_total ) * 100 / @pre_total), 0) AS 'disparity';
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_agent_insert`( pUsername VARCHAR(100), pAgent_name VARCHAR(100), pPassword VARCHAR(255), pStaff_id BIGINT, pPhone VARCHAR(50), pEmail VARCHAR(255), pAddress VARCHAR(500), pRating TINYINT, pContract_type TINYINT, pBusiness_type TINYINT, pStore_type TINYINT, pCity VARCHAR(100), pRatio FLOAT(3,2) )
+BEGIN
+		CALL sp_role_checkStaffRole( pStaff_id, '1,2,3,4', @check_role);
+        IF ( @check_role = 1 ) THEN
+			IF EXISTS ( SELECT `id` FROM `user` WHERE `username` = pUsername ) THEN
+				SET @user_id = (SELECT `id` FROM `user` WHERE `username` = pUsername);
+			ELSE
+				INSERT INTO `vietlott`.`user`
+				(
+					`username`,
+					`password`,
+					`full_name`,
+					`email`,
+					`phone`,
+					`address`,
+					`user_type`,
+					`created_date`,
+					`updated_date`
+				)
+				VALUES
+				(
+					pUsername,
+					pPassword,
+					pAgent_name,
+					pEmail,
+					pPhone,
+					pAddress,
+					2,
+					UNIX_TIMESTAMP(NOW()),
+					UNIX_TIMESTAMP(NOW())
+				);
+
+				SET @user_id = LAST_INSERT_ID();
+			END IF;
+			
+			IF ( @user_id > 0 ) THEN
+				INSERT INTO `vietlott`.`agent`
+				(
+					`name`,
+					`user_id`,
+					`phone`,
+					`address`,
+					`city`,
+					`rating`,
+					`contract_type`,
+					`business_type`,
+					`store_type`,
+					`staff_id`,
+					`ratio`
+				)
+				VALUES
+				(
+					pAgent_name,
+					@user_id,
+					pPhone,
+					pAddress,
+					pCity,
+					pRating,
+					pContract_type,
+					pBusiness_type,
+					pStore_type,
+					pStaff_id,
+					pRatio
+				);
+				SELECT ROW_COUNT() AS 'result';
+			ELSE
+				SELECT 0 AS 'result';
+			END IF;
+		ELSE
+			SELECT -1 AS 'result';
+        END IF;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_agent_insertForExploration`(
+                    pStaff_id BIGINT, pAgent_name VARCHAR(100), pLatitude DOUBLE, pLongitude DOUBLE, pImage VARCHAR(500),
+                    pArea_type VARCHAR(200), pTraffic_type VARCHAR(200), pFlow_type VARCHAR(200), pParking_type VARCHAR(200),
+                    pPopulation_type VARCHAR(200), pDistance_type VARCHAR(200), pLandowner_type VARCHAR(200),
+                    pWidth VARCHAR(10), pHeight VARCHAR(10), pDepth VARCHAR(10), pHas_modem TINYINT, pHas_power_supply TINYINT,
+                    pContract_type VARCHAR(200), pRegistration_type VARCHAR(200), pAgent_username VARCHAR(100))
+BEGIN
+		-- CALL sp_role_checkStaffRole( pStaff_id, '4', @check_role);
+        SET @check_role = 1;
+        IF ( @check_role = 1 ) THEN
+			SET @is_active	= 1;
+            SET @result		= 1;
+            
+			SET @agent_id	=	COALESCE((SELECT `id` FROM `account` WHERE `username` = pAgent_username), 0);
+            
+            IF ( @agent_id > 0 ) THEN
+				SET @check_exists = COALESCE((SELECT `id` FROM `agent` WHERE `user_id` = @agent_id), 0);
+                IF ( @check_exists > 0 ) THEN
+					SET @result		= -2;
+                    SET @agent_id	=  0;
+                    SET @is_active	=  0;
+				END IF;
+			ELSE
+                SET @is_active = 0;
+            END IF;
+            
+            IF ( @result = -2 ) THEN
+				SELECT @result AS 'result';
+            ELSE
+			
+				INSERT INTO `vietlott`.`agent`
+				(
+					`staff_id`,
+					`name`,
+					`latitude`,
+					`longitude`,
+					`image`,
+					`area_type`,
+					`traffic_type`,
+					`flow_type`,
+					`parking_type`,
+					`population_type`,
+					`distance_type`,
+					`landowner_type`,
+					`width`,
+					`height`,
+					`depth`,
+					`has_modem`,
+					`has_power_supply`,
+					`contract_status`,
+					`registration_status`,
+					`user_id`,
+					`enable`
+				)
+				VALUES
+				(
+					pStaff_id,
+					pAgent_name,
+					pLatitude,
+					pLongitude,
+					pImage,
+					pArea_type,
+					pTraffic_type,
+					pFlow_type,
+					pParking_type,
+					pPopulation_type,
+					pDistance_type,
+					pLandowner_type,
+					pWidth,
+					pHeight,
+					pDepth,
+					pHas_modem,
+					pHas_power_supply,
+					pContract_type,
+					pRegistration_type,
+					@agent_id,
+					@is_active
+				);
+				SET @result = ROW_COUNT();
+                SELECT @result AS 'result';
+			END IF;
+		ELSE
+			SET @result = -1;
+            SELECT @result AS 'result';
+		END IF;
+	END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_agent_register`( pUsername VARCHAR(50), pPhone VARCHAR(50), pEmail VARCHAR(255), pFull_name VARCHAR(100), pPassword VARCHAR(100), pAddress VARCHAR(200), pAgent_name VARCHAR(50), pBusiness_type TINYINT )
+BEGIN
+		IF EXISTS ( SELECT `id` FROM `account` WHERE `username` = pUsername ) THEN
+			SELECT -1 AS 'result';
+		ELSEIF EXISTS ( SELECT `id` FROM `agent` WHERE `email` = pEmail ) THEN
+			SELECT -2 AS 'result';
+		ELSEIF EXISTS ( SELECT `id` FROM `agent` WHERE `phone` = pPhone ) THEN
+			SELECT -3 AS 'result';
+		ELSE
+			SET @agent1_id = COALESCE((SELECT `id` FROM `account` WHERE `username` = pAgent_name AND `enable` = 1), 0);
+			
+			-- SET @user_type = IF(@agent1_id <> 0, 2, 1);
+			
+			IF @agent1_id <> 0 THEN
+				SET @user_type = 2;
+				SET @agent1_name = (SELECT `username` FROM `account` WHERE `id` = @agent1_id);
+			ELSE
+				SET @user_type = 1;
+			END IF;
+			
+			INSERT INTO `account`
+			(
+				`username`,
+				`password`,
+				`full_name`,
+                `phone`,
+                `email`,
+				`user_type`,
+				`enable`
+			)
+			VALUES
+			(
+				pUsername,
+				pPassword,
+				pFull_name,
+                pPhone,
+                pEmail,
+				@user_type,
+				0
+			);
+			
+			SET @user_id = LAST_INSERT_ID();
+			
+			INSERT INTO `agent`
+			(
+				`name`,
+				`user_id`,
+				`phone`,
+                `email`,
+				`address`,
+				`business_type`,
+                `class`,
+				`enable`
+			)
+			VALUES
+			(
+				pFull_name,
+				@user_id,
+				pPhone,
+                pEmail,
+				pAddress,
+				pBusiness_type,
+                @user_type,
+				0
+			);
+			
+			SET @agent2_id = LAST_INSERT_ID();
+			
+			IF @agent1_id <> 0 THEN
+				INSERT INTO `vietlott`.`agent_class`
+				(
+					`agent_c1_id`,
+					`agent_c2_id`,
+					`agent_c1_name`,
+					`agent_c2_name`,
+					`enable`
+				)
+				VALUES
+				(
+					@agent1_id,
+					@agent2_id,
+					@agent1_name,
+					pFull_name,
+					0
+				);
+			END IF;
+			SELECT IF(@user_id > 0 AND @agent2_id > 0, 1, 0) AS 'result';
+		END IF;
+	END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_agent_ticket_getHistory`( pAgent_id INT, pOffset INT, pLimit INT )
+BEGIN
+		SET @unit = 10000;
+		SELECT	ut.`user_id`,
+				u.`full_name`,
+				ut.`ticket_type`,
+                tt.`image` AS `ticket_type_image`,
+				COUNT(ut.`id`) AS `board`,
+                COUNT(ut.`id`) * @unit AS `money`,
+				ut.`created_date` AS `date`
+		FROM	`user_ticket` ut
+			JOIN	`agent` ag ON ag.`user_id` = ut.`agent_id`
+            JOIN	`user`	u ON u.`id` = ut.`user_id`
+            JOIN	`ticket_type` tt ON tt.`id` = ut.`ticket_type`
+        WHERE	ut.`agent_id`	=	pAgent_id
+			AND ut.`enable`		=	1
+            AND ut.`state`		=	1
+		GROUP BY ut.`id`
+        ORDER BY ut.`created_date` DESC
+        LIMIT pOffset, pLimit;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_agent_ticket_getHistoryByDate`( pAgent_id INT, pDate DATE, pOffset INT, pLimit INT )
+BEGIN
+		SET @unit = 10000;
+		SELECT	ut.`user_id`,
+				u.`full_name`,
+				ut.`ticket_type`,
+                tt.`image` AS `ticket_type_image`,
+				COUNT(ut.`id`) AS `board`,
+                COUNT(ut.`id`) * @unit AS `money`,
+				ut.`created_date` AS `date`
+		FROM	`user_ticket` ut
+			JOIN	`agent` ag ON ag.`user_id` = ut.`agent_id`
+            JOIN	`user`	u ON u.`id` = ut.`user_id`
+            JOIN	`ticket_type` tt ON tt.`id` = ut.`ticket_type`
+        WHERE	ut.`agent_id`	=	pAgent_id
+			AND ut.`enable`		=	1
+            AND ut.`state`		=	1
+            AND	DATE(ut.`created_date`) = pDate
+		GROUP BY ut.`id`
+        ORDER BY ut.`created_date` DESC
+        LIMIT pOffset, pLimit;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_agent_ticket_getHistoryByDateTotal`( pAgent_id INT, pDate DATE )
+BEGIN
+		SELECT	COUNT(*) AS `total`
+		FROM	`user_ticket` ut
+			JOIN	`agent` ag ON ag.`user_id` = ut.`agent_id`
+            JOIN	`user`	u ON u.`id` = ut.`user_id`
+            JOIN	`ticket_type` tt ON tt.`id` = ut.`ticket_type`
+        WHERE	ut.`agent_id`	=	pAgent_id
+			AND ut.`enable`		=	1
+            AND ut.`state`		=	1
+            AND	DATE(ut.`created_date`) = pDate;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_agent_ticket_getHistoryTotal`( pAgent_id INT )
+BEGIN
+		SELECT	COUNT(*) AS `total`
+		FROM	`user_ticket` ut
+			JOIN	`agent` ag ON ag.`user_id` = ut.`agent_id`
+            JOIN	`user`	u ON u.`id` = ut.`user_id`
+            JOIN	`ticket_type` tt ON tt.`id` = ut.`ticket_type`
+        WHERE	ut.`agent_id`	=	pAgent_id
+			AND ut.`enable`		=	1
+            AND ut.`state`		=	1;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_agent_ticket_getTopTicketType`( pStaff_id BIGINT, pAgent_id INT, pStart_date INT, pEnd_date INT, pOffset INT, pLimit INT )
+BEGIN
+		SET @unit = 10000;
+		IF ( pAgent_id = 0 )  THEN
+			SELECT	agt.`ticket_type`,
+					tt.`name` AS `ticket_name`,
+					COUNT(agt.`id`)	AS `total_ticket`,
+                    COUNT(agt.`id`) * @unit AS `total_income`
+            FROM	`agent_ticket` agt
+				JOIN	`agent` ag ON ag.`user_id` = agt.`agent_id`
+                JOIN	`ticket_type` tt ON tt.`id` = agt.`ticket_type`
+			WHERE	ag.`staff_id`	= pStaff_id
+				AND	ag.`enable`		= 1
+                AND	UNIX_TIMESTAMP(agt.`created_date`)	BETWEEN	pStart_date	AND pEnd_date
+			GROUP BY agt.`ticket_type`
+			ORDER BY `total_ticket` DESC
+            LIMIT pOffset, pLimit;
+		ELSE
+			SELECT	agt.`ticket_type`,
+					tt.`name` AS `ticket_name`,
+                    COUNT(agt.`id`)	AS `total_ticket`,
+                    COUNT(agt.`id`) * @unit AS `total_income`
+            FROM	`agent_ticket` agt
+				JOIN	`agent` ag ON ag.`user_id` = agt.`agent_id`
+                JOIN	`agent_class` agc ON agc.`agent_c2_id` = ag.`user_id`
+                JOIN	`ticket_type` tt ON tt.`id` = agt.`ticket_type`
+			WHERE	ag.`class` = 2
+				AND agc.`agent_c1_id`	=	pAgent_id
+				AND ag.`enable`			=	1
+                AND	UNIX_TIMESTAMP(agt.`created_date`)	BETWEEN	pStart_date	AND pEnd_date
+			GROUP BY agt.`ticket_type`
+			ORDER BY `total_ticket` DESC
+            LIMIT pOffset, pLimit;
+        END IF;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_agent_ticket_getTotalRevenueByDate`( pAgent_id INT, pDate DATE )
+BEGIN
+		SELECT	COALESCE(SUM(agt.`agency_income`), 0) AS `total_revenue`
+		FROM	`agent_ticket` agt
+        WHERE	agt.`agent_id`			=	pAgent_id
+            AND	DATE(agt.`created_date`)= pDate;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_agent_ticket_insert`( pAgent_id INT, pTicket_number VARCHAR(50), pTicket_type TINYINT )
+BEGIN
+		INSERT INTO `agent_ticket`
+		(
+			`agent_id`,
+			`ticket_number`,
+			`ticket_type`
+        )
+		VALUES
+		(
+			pAgent_id,
+			pTicket_number,
+			1
+		);
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_agent_update`( pAgent_id BIGINT, pAgent_name VARCHAR(100), pPhone VARCHAR(50), pEmail VARCHAR(255), pAddress VARCHAR(500), pRating TINYINT, pState TINYINT, pActive TINYINT, pContract_type TINYINT, pBusiness_type TINYINT, pStore_type TINYINT, pCity VARCHAR(100), pRatio FLOAT(3,2) )
+BEGIN
+		/*CALL sp_role_checkStaffRole( pStaff_id, '1,2,3,4', @check_role);
+        IF ( @check_role = 1 ) THEN*/
+			UPDATE	`vietlott`.`agent`
+			SET
+					`name`			= pAgent_name,
+					`phone`			= pPhone,
+					`address`		= pAddress,
+					`city`			= pCity,
+					`rating`		= pRating,
+					`state`			= pState,
+					`contract_type` = pContract_type,
+					`business_type` = pBusiness_type,
+					`store_type`	= pStore_type,
+					`enable`		= pActive,
+					`ratio`			= pRatio
+			WHERE	`id`			= pAgent_id;
+			SELECT ROW_COUNT() AS 'result';
+		/*ELSE
+			SELECT -1 AS 'result';
+        END IF;*/
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_agent_updatePasswordByStaff`( pAgent_id INT, pStaff_id BIGINT, pPassword VARCHAR(100) )
+BEGIN
+		CALL sp_role_checkStaffRole( pStaff_id, '1,2,3,4', @check_role);
+        IF ( @check_role = 1 ) THEN
+			UPDATE	`vietlott`.`agent`
+			SET
+					`password`	= pPassword
+			WHERE	`id`		= pAgent_id
+				AND	`staff_id`	= pStaff_id;
+			SELECT ROW_COUNT() AS 'result';
+		ELSE
+			SELECT -1 AS 'result';
+        END IF;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_back_end_login`( pUsername VARCHAR(100), pPassword VARCHAR(100) )
+BEGIN
+		SET @id = COALESCE(( SELECT `id` FROM `account` WHERE (`username` = pUsername OR `phone` = pUsername ) AND `user_type` = 0 ), 0);
+        IF ( @id > 0 ) THEN
+			SET @pass = (SELECT `password` FROM `account` WHERE `id` = @id);
+            IF @pass = pPassword THEN
+				SELECT	1 AS `result`,
+						`account`.`id` AS `user_id`,
+						`account`.`avatar`,
+						`account`.`full_name`,
+						r.`name` AS `role_name`,
+                        r.`id` AS `role_id`
+				FROM	`account`
+					JOIN	`account_role` acr ON acr.`account_id` = `account`.`id`
+                    JOIN	`role_team` rt ON rt.`id` = acr.`role_team_id`
+                    JOIN	`role` r ON r.`id` = rt.`role_id`
+				WHERE (	`username`	= pUsername
+					OR
+						`phone`		= pUsername
+					)
+					AND `password`	= pPassword;
+			ELSE
+				SELECT 0 AS 'result';
+			END IF;
+		ELSE
+			SELECT -1 AS 'result';
+		END IF;
+	END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_business_type_list`( )
+BEGIN
+		SELECT	bt.`id`,
+				bt.`name`
+        FROM	`business_type` bt;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_calendar_fill`(start_date DATE, end_date DATE)
+BEGIN
+  DECLARE crt_date DATE;
+  SET crt_date=start_date;
+  WHILE crt_date < end_date DO
+    INSERT IGNORE INTO calendar VALUES(crt_date);
+    SET crt_date = ADDDATE(crt_date, INTERVAL 1 DAY);
+  END WHILE;
+END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_contract_type_list`( )
+BEGIN
+		SELECT	ct.`id`,
+				ct.`name`
+        FROM	`contract_type` ct;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_data_fill`(start_date DATE, end_date DATE)
+BEGIN
+		DECLARE crt_date DATE;
+		SET crt_date=start_date;
+		WHILE crt_date < end_date DO
+			INSERT INTO `agent_ticket`(`agent_id`, `created_date`, `ticket_type`, `agency_income`, `me_income`)
+            -- VALUES(FLOOR( 5 + RAND( ) * 40 ), FROM_UNIXTIME(UNIX_TIMESTAMP(crt_date) + FLOOR(0 + (RAND() * 63072))), FLOOR( 1 + RAND( ) * 4 ), 8000, 2000);
+            VALUES(10007, FROM_UNIXTIME(UNIX_TIMESTAMP(crt_date) + FLOOR(0 + (RAND() * 63072))), FLOOR( 1 + RAND( ) * 4 ), 8000, 2000);
+			SET crt_date = ADDDATE(crt_date, INTERVAL 1 DAY);
+		END WHILE;
+	END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_manage_account_create`( pAccount INT, pUsername VARCHAR(100), pPassword VARCHAR(100), pFull_name VARCHAR(100), pBirthday VARCHAR(50), pEmail VARCHAR(255), pPhone VARCHAR(50), pTeam_id INT )
+BEGIN
+		CALL sp_role_checkStaffRole( pAccount, '1,2,3,4', @check_role);
+        IF ( @check_role = 1 ) THEN
+			IF EXISTS ( SELECT `id` FROM `account` WHERE `username` = pUsername ) THEN
+				SELECT -2 AS 'result', 'username đã tồn tại' AS 'msg';
+			ELSEIF EXISTS ( SELECT `id` FROM `account` WHERE `email` = pEmail ) THEN
+				SELECT -3 AS 'result', 'email đã tồn tại' AS 'msg';
+			ELSE
+				INSERT INTO `account`
+				(
+					`username`,
+					`password`,
+					`full_name`,
+					`birthday`,
+					`email`,
+					`phone`,
+					`user_type`
+				)
+				VALUES
+				(
+					pUsername,
+					pPassword,
+					pFull_name,
+					DATE(pBirthday),
+					pEmail,
+					pPhone,
+					0
+				);
+				
+				SET @account_id = LAST_INSERT_ID();
+				
+				INSERT INTO `account_role`
+				(
+					`account_id`,
+					`role_team_id`
+				)
+				VALUES
+				(
+					@account_id,
+					pTeam_id
+				);
+
+				SELECT IF(@account_id IS NOT NULL, 1, 0) AS 'result', 'thành công' AS 'msg';
+			END IF;
+		ELSE
+			SELECT -1 AS 'result', 'account không có quyền tạo' AS 'msg';
+        END IF;
+	END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_manage_account_detail`( pAccount INT, pUser_id INT )
+BEGIN
+		CALL sp_role_checkStaffRole( pAccount, '1,2,3,4', @check_role);
+        IF ( @check_role = 1 ) THEN
+			SELECT	acc.`id` AS `account_id`,
+				acc.`username`,
+				acc.`full_name`,
+				acc.`phone`,
+				acc.`email`,
+                acc.`birthday`,
+                rt.`id` AS `role_id`,
+				rt.`name` AS `role_name`
+			FROM	`account` acc
+				JOIN	`account_role` acr ON acr.`account_id` = acc.`id`
+				JOIN	`role_team` rt ON rt.`id` = acr.`role_team_id`
+				JOIN	`role` r ON r.`id` = rt.`role_id`
+			WHERE	acc.`id`		= pUser_id
+				AND	acc.`user_type` = 0;
+        END IF;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_manage_account_get_by_name`( pAccount INT, pAccount_name VARCHAR(100), pPage INT )
+BEGIN
+		CALL sp_role_checkStaffRole( pAccount, '1,2,3,4', @check_role);
+        IF ( @check_role = 1 ) THEN
+			SET @paging = pPage;
+			SET @lim = 20;
+			SET @off = IF(@paging = 1, 0, (@paging - 1) * @lim);
+
+			SET @sqls = CONCAT("
+				SELECT	acc.`id` AS `account_id`,
+					acc.`username`,
+					acc.`full_name`,
+                    acc.`phone`,
+                    acc.`email`,
+                    r.`name` AS `role_name`
+				FROM	`account` acc
+					JOIN	`account_role` acr ON acr.`account_id` = acc.`id`
+					JOIN	`role_team` rt ON rt.`id` = acr.`role_team_id`
+					JOIN	`role` r ON r.`id` = rt.`role_id`
+				WHERE	( `username` LIKE '", pAccount_name, "%' OR `full_name` LIKE '", pAccount_name, "%' )
+					AND	acc.`user_type` = 0
+				ORDER BY acc.`created_date` DESC
+				LIMIT ", @off, ", ", @lim, ";");
+			PREPARE stmt FROM @sqls;
+			EXECUTE stmt;
+			DEALLOCATE PREPARE stmt;
+        END IF;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_manage_account_get_by_name_total`( pAccount INT, pAccount_name VARCHAR(100) )
+BEGIN
+		CALL sp_role_checkStaffRole( pAccount, '1,2,3,4', @check_role);
+        IF ( @check_role = 1 ) THEN
+			SET @lim = 20;
+			SET @total = (	SELECT	COUNT(acc.`id`)
+							FROM	`account` acc
+								JOIN	`account_role` acr ON acr.`account_id` = acc.`id`
+								JOIN	`role_team` rt ON rt.`id` = acr.`role_team_id`
+								JOIN	`role` r ON r.`id` = rt.`role_id`
+							WHERE	( `username` LIKE CONCAT(pAccount_name, '%') OR `full_name` LIKE CONCAT(pAccount_name, '%') )
+								AND	`user_type` = 0
+						);
+			IF ( @total = 0 ) THEN
+				SELECT 0 AS `total`;
+            ELSEIF ( @total <= @lim ) THEN
+				SELECT 1 AS `total`;
+			ELSE
+				SELECT FLOOR(@total / @lim) + 1 AS `total`;
+            END IF;
+        END IF;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_manage_account_list`( pAccount INT, pPage INT )
+BEGIN
+		CALL sp_role_checkStaffRole( pAccount, '1,2,3,4', @check_role);
+        IF ( @check_role = 1 ) THEN
+			SET @paging = pPage;
+			SET @lim = 20;
+			SET @off = IF(@paging = 1, 0, (@paging - 1) * @lim);
+
+			SET @sqls = CONCAT("
+				SELECT	acc.`id` AS `account_id`,
+					acc.`username`,
+					acc.`full_name`,
+                    acc.`phone`,
+                    acc.`email`,
+                    r.`name` AS `role_name`                    
+				FROM	`account` acc
+					JOIN	`account_role` acr ON acr.`account_id` = acc.`id`
+					JOIN	`role_team` rt ON rt.`id` = acr.`role_team_id`
+					JOIN	`role` r ON r.`id` = rt.`role_id`
+				WHERE	acc.`user_type` = 0
+				ORDER BY acc.`created_date` DESC
+				LIMIT ", @off, ", ", @lim, ";");
+			PREPARE stmt FROM @sqls;
+			EXECUTE stmt;
+			DEALLOCATE PREPARE stmt;
+        END IF;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_manage_account_total`( pAccount INT )
+BEGIN
+		CALL sp_role_checkStaffRole( pAccount, '1,2,3,4', @check_role);
+        IF ( @check_role = 1 ) THEN
+			SET @lim = 20;
+			SET @total =(	SELECT	COUNT(acc.`id`)
+							FROM	`account` acc
+								JOIN	`account_role` acr ON acr.`account_id` = acc.`id`
+								JOIN	`role_team` rt ON rt.`id` = acr.`role_team_id`
+								JOIN	`role` r ON r.`id` = rt.`role_id`
+							WHERE	`user_type` = 0
+						);
+			IF ( @total = 0 ) THEN
+				SELECT 0 AS `total`;
+            ELSEIF ( @total <= @lim ) THEN
+				SELECT 1 AS `total`;
+			ELSE
+				SELECT FLOOR(@total / @lim) + 1 AS `total`;
+            END IF;
+        END IF;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_manage_account_update`( pAccount INT, pUser_id INT, pUsername VARCHAR(100), pPassword VARCHAR(100), pFull_name VARCHAR(100), pBirthday DATE, pEmail VARCHAR(255), pPhone VARCHAR(50), pTeam_id INT )
+BEGIN
+		CALL sp_role_checkStaffRole( pAccount, '1,2,3,4', @check_role);
+        IF ( @check_role = 1 ) THEN
+			IF EXISTS ( SELECT `id` FROM `account` WHERE `username` = pUsername AND `id` <> pUser_id ) THEN
+				SELECT -2 AS 'result', 'username đã tồn tại' AS 'msg';
+			ELSEIF EXISTS ( SELECT `id` FROM `account` WHERE `email` = pEmail AND `id` <> pUser_id ) THEN
+				SELECT -3 AS 'result', 'email đã tồn tại' AS 'msg';
+			ELSE
+				IF pPassword <> '' THEN
+					UPDATE	`account`
+					SET		`password`	=	pPassword
+					WHERE	`id`		=	pUser_id;
+				END IF;
+				
+				UPDATE	`account`
+				SET		`full_name`	=	pFull_name,
+						`birthday`	=	pBirthday,
+						`email`		=	pEmail,
+						`phone`		=	pPhone
+				WHERE	`id`		=	pUser_id;
+				
+				UPDATE	`account_role`
+				SET		`role_team_id`	=	pTeam_id
+				WHERE	`account_id`	=	pUser_id;
+
+				SELECT 1 AS 'result', 'update thành công' AS 'msg';
+			END IF;
+		ELSE
+			SELECT -1 AS 'result', 'account không có quyền tạo' AS 'msg';
+		END IF;
+	END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_payment_order_getOrderId`( pUser_id BIGINT, pReason_id TINYINT )
+BEGIN
+		INSERT INTO `payment_order`
+		(
+			`user_id`,
+			`reason_id`
+		)
+		VALUES
+		(
+			pUser_id,
+			pReason_id
+		);
+		SELECT LAST_INSERT_ID() AS 'order_id';
+	END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_rating_list`( )
+BEGIN
+		SELECT	r.`id`,
+				r.`name`
+        FROM	`rating` r;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_report_agency_create`(
+                    pAccount INT, pUsername VARCHAR(100), pPassword VARCHAR(100), pAgent_name VARCHAR(100), pPhone VARCHAR(50),
+                    pEmail VARCHAR(255), pStore_type TINYINT, pCity VARCHAR(100), pReference VARCHAR(100), pBusiness_type TINYINT,
+                    pRating TINYINT, pRatio TINYINT, pSale_owner VARCHAR(100))
+BEGIN
+		CALL sp_role_checkStaffRole( pAccount, '4', @check_role);
+        IF ( @check_role = 1 ) THEN
+			IF EXISTS ( SELECT `id` FROM `account` WHERE `username` = pUsername ) THEN
+				SELECT -2 AS 'result', 'username đã tồn tại' AS 'msg';
+			ELSEIF EXISTS ( SELECT `id` FROM `account` WHERE `email` = pEmail ) THEN
+				SELECT -3 AS 'result', 'email đã tồn tại' AS 'msg';
+			ELSE
+				SET @ratio_default = 60;
+                SET @sale_owner_id = COALESCE(( SELECT `id` FROM `account` WHERE `username` = pSale_owner), 0);
+				SET @parent_id = COALESCE(( SELECT `id` FROM `account` WHERE `username` = pReference), 0);
+				IF @parent_id <> 0 THEN
+					SET @user_type = 2;
+				ELSE
+					SET @user_type = 1;
+				END IF;
+				
+				INSERT INTO `account`
+				(
+					`username`,
+					`password`,
+					`full_name`,
+					`phone`,
+					`email`,
+					`user_type`
+				)
+				VALUES
+				(
+					pUsername,
+					pPassword,
+					pAgent_name,
+					pPhone,
+					pEmail,
+					@user_type
+				);
+				SET @agent_id = LAST_INSERT_ID();
+				
+				IF (@user_type = 2) THEN
+					INSERT INTO `agent_class`
+					(
+						`agent_c1_id`,
+						`agent_c2_id`,
+						`agent_c1_name`,
+						`agent_c2_name`
+					)
+					SELECT	`id`, @agent_id, `full_name`, pAgent_name
+					FROM	`account`
+					WHERE	(`username` = pReference OR `phone` = pReference);
+				END IF;
+				
+				INSERT INTO `agent`
+				(
+					`user_id`,
+					`staff_id`,
+					`name`,
+					`store_type`,
+					`business_type`,
+					`city`,
+					`rating`,
+					`ratio`,
+					`class`,
+					`parent_id`
+				)
+				VALUES
+				(
+					@agent_id,
+					@sale_owner_id,
+					pAgent_name,
+					pStore_type,
+					pBusiness_type,
+					pCity,
+					pRating,
+					pRatio,
+					@user_type,
+					@parent_id
+				);
+				SELECT ROW_COUNT() AS 'result', 'thành công' AS 'msg';
+			END IF;
+		ELSE
+			SELECT -1 AS 'result', 'account không có quyền tạo' AS 'msg';
+		END IF;
+	END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_report_agency_daily_active_statistic`( pAccount INT, pStart_date TIMESTAMP, pEnd_date TIMESTAMP, pAgent_id INT )
+BEGIN
+		CALL sp_calendar_fill(DATE(pStart_date), DATE(pEnd_date));
+		IF ( pAgent_id = 0 )  THEN
+			SELECT	IFNULL(t.`location`, 0) AS `location`,
+					cal.`datefield` AS `date`
+			FROM
+			(
+			SELECT	COUNT(ag.`id`) AS `location`,
+				DATE(ag.`active_date`) AS `date`
+			FROM	`agent` ag
+			WHERE	ag.`staff_id`	=	pAccount
+				AND ag.`enable`		=	1
+				AND	ag.`active_date`	BETWEEN pStart_date AND pEnd_date
+			GROUP BY DATE(ag.`active_date`)
+			)  AS t
+				RIGHT JOIN `calendar` cal ON cal.`datefield` = t.`date`
+            WHERE	cal.`datefield` BETWEEN pStart_date AND pEnd_date
+			ORDER BY `date`;
+		ELSE
+			SELECT	IFNULL(t.`location`, 0) AS `location`,
+					cal.`datefield` AS `date`
+			FROM
+			(
+				SELECT	COUNT(ag.`id`) AS `location`,
+						DATE(ag.`active_date`) AS `date`
+				FROM	`agent` ag
+					JOIN	`agent_class` agc ON agc.`agent_c2_id` = ag.`user_id`
+				WHERE	ag.`class`			=	2
+					AND agc.`agent_c1_id`	=	pAgent_id
+					AND ag.`enable`			=	1
+					AND	ag.`active_date`	BETWEEN	pStart_date	AND pEnd_date
+				GROUP BY DATE(ag.`active_date`)
+			) AS t
+				RIGHT JOIN `calendar` cal ON cal.`datefield` = t.`date`
+            WHERE	cal.`datefield` BETWEEN pStart_date AND pEnd_date
+            ORDER BY `date`;
+        END IF;
+	END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_report_agency_detail`( pAccount INT, pAgent_id INT )
+BEGIN
+		SET @ratio_default = 5;
+        CALL sp_role_checkStaffRole( pAccount, '4', @check_role);
+        IF ( @check_role = 1 ) THEN
+			SELECT	ag.`user_id` AS `agent_id`,
+					ag.`name` AS `agent_name`,
+					acc.`username`,
+					acc.`email`,
+					acc.`password`,
+					acc.`phone`,
+					ag.`store_type`,
+					ag.`city`,
+					ag.`business_type`,
+					ag.`rating`,
+                    COALESCE(parent.`id`, '') AS 'reference_id',
+					COALESCE(parent.`username`, '') AS 'reference',
+                    COALESCE(sale_owner.`id`, '') AS 'sale_owner_id',
+					COALESCE(sale_owner.`username`, '') AS 'sale_owner_username',
+					IF(ag.`ratio` = @ratio_default, 0, 1) AS `ratio_default`,
+					ag.`ratio`
+			FROM	`agent` ag
+				JOIN	`account` acc ON acc.`id` = ag.`user_id`
+				LEFT JOIN `account` parent ON parent.`id` = ag.`parent_id`
+                LEFT JOIN `account` sale_owner ON sale_owner.`id` = ag.`staff_id`
+			WHERE	ag.`user_id`	=	pAgent_id;
+		END IF;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_report_agency_detail_statistic`( pAccount INT, pAgent_id INT, pStart_date TIMESTAMP, pEnd_date TIMESTAMP )
+BEGIN
+		SET @unit = 10000;
+        SET @business_cost = 0;
+        CALL sp_role_checkStaffRole( pAccount, '1,2,3,4', @check_role);
+        IF ( @check_role = 1 ) THEN
+			SELECT	a.*,
+					(a.`ticket` * 100 / b.`total`) AS 'percent'
+			FROM
+			(
+			SELECT	agt.`ticket_type`,
+					tt.`name` AS `ticket_name`,
+					COUNT(agt.`ticket_type`) AS `ticket`,
+					COUNT(agt.`ticket_type`) * @unit AS `revenue`,
+					fn_formula_getChange(FLOOR( 5 + RAND(pAgent_id) * 5 ), FLOOR( 5 + RAND(DAY(pEnd_date)) * 5 )) AS `revenue_change`,
+                    IF (agt.`ticket_type` = 2, '2,4 tỷ', '2,5 tỷ') AS 'investment',
+                    IF (agt.`ticket_type` = 2, '240 tr', '500 tr') AS 'gross_profit'
+			FROM	`agent_ticket` agt
+				JOIN	`agent` ag ON ag.`user_id` = agt.`agent_id`
+				JOIN	`ticket_type` tt ON tt.`id` = agt.`ticket_type`
+			WHERE	agt.`agent_id`		=	pAgent_id
+					AND ag.`enable`		=	1
+					AND	agt.`created_date`	BETWEEN	pStart_date AND pEnd_date
+			GROUP BY	agt.`ticket_type`,
+						tt.`name`
+			) AS a
+				JOIN	(
+						SELECT SUM(`total`) AS `total`
+						FROM
+						(
+							SELECT	COUNT(agt.`ticket_type`) AS `total`
+							FROM	`agent_ticket` agt
+								JOIN	`agent` ag ON ag.`user_id` = agt.`agent_id`
+							WHERE	agt.`agent_id`		=	pAgent_id
+									AND ag.`enable`		=	1
+									AND	agt.`created_date`	BETWEEN	pStart_date AND pEnd_date
+							GROUP BY	agt.`ticket_type`
+						) AS c
+					) AS b;
+		END IF;
+	END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_report_agency_get_by_name`( pAccount INT, pPage INT, pAgent_name VARCHAR(100) )
+BEGIN
+		CALL sp_role_checkStaffRole( pAccount, '4', @check_role);
+        IF ( @check_role = 1 ) THEN
+			SET @paging = pPage;
+			SET @lim = 20;
+			SET @off = IF(@paging = 1, 0, (@paging - 1) * @lim);
+
+			SET @sqls = CONCAT("
+				SELECT	ag.`user_id` AS `agent_id`,
+						acc.`username`,
+						acc.`phone`,
+						acc.`email`,
+						ag.`name` AS `agent_name`,
+						bt.`name` AS `business_type`,
+						ag.`address`,
+						IF(ag.`enable` = 1, 'YES', 'NO') AS `active`,
+						ag.`contract_type` AS `contract_type_id`,
+						ct.`name` AS `contract_status`,
+						IF(ag.`state` = 1, 'YES', 'NO') AS `state`,
+						r.`name` AS `rating`,
+						st.`name` AS `store_type`,
+						ag.`parent_id`,
+						COALESCE(parent.`username`, '') AS `parent_username`,
+						ag.`staff_id` AS `sale_owner_id`,
+						COALESCE(sale_owner.`username`, '') AS `sale_owner_username`
+				FROM	`agent` ag
+					JOIN	`account` acc ON acc.`id` = ag.`user_id`
+					LEFT JOIN	`account` parent ON parent.`id` = ag.`parent_id`
+					LEFT JOIN	`account` sale_owner ON sale_owner.`id` = ag.`staff_id`
+					JOIN	`contract_type` ct ON ct.`id` = ag.`contract_type`
+					JOIN	`business_type` bt ON bt.`id`	=	ag.`business_type`
+					JOIN	`store_type` st ON st.`id`		=	ag.`store_type`
+					JOIN	`rating` r ON r.`id`			=	ag.`rating`
+				WHERE	(	ag.`name`	LIKE	'%", pAgent_name, "%'
+						OR
+							acc.`username`	LIKE	'%", pAgent_name, "%'
+						)
+				ORDER BY ag.`created_date` DESC
+				LIMIT ", @off, ", ", @lim, ";");
+			PREPARE stmt FROM @sqls;
+			EXECUTE stmt;
+			DEALLOCATE PREPARE stmt;
+		END IF;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_report_agency_get_by_name_total`( pAccount INT, pAgent_name VARCHAR(100) )
+BEGIN
+		CALL sp_role_checkStaffRole( pAccount, '4', @check_role);
+        IF ( @check_role = 1 ) THEN
+			SET @lim = 20;
+			SET @total = (	SELECT	COUNT(*)
+							FROM	`agent` ag
+								JOIN	`account` acc ON acc.`id` = ag.`user_id`
+								LEFT JOIN	`account` parent ON parent.`id` = ag.`parent_id`
+								LEFT JOIN	`account` sale_owner ON sale_owner.`id` = ag.`staff_id`
+								JOIN	`contract_type` ct ON ct.`id` = ag.`contract_type`
+								JOIN	`business_type` bt ON bt.`id`	=	ag.`business_type`
+								JOIN	`store_type` st ON st.`id`		=	ag.`store_type`
+								JOIN	`rating` r ON r.`id`			=	ag.`rating`
+							WHERE	(	ag.`name`	LIKE	CONCAT('%', pAgent_name, '%') OR
+										acc.`username`	LIKE	CONCAT('%', pAgent_name, '%')
+									)
+						);
+			IF ( @total = 0 ) THEN
+				SELECT 0 AS `total`;
+			ELSEIF ( @total <= @lim ) THEN
+				SELECT 1 AS `total`;
+			ELSE
+				SELECT FLOOR(@total / @lim) + 1 AS `total`;
+			END IF;
+		END IF;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_report_agency_info_statistic`( pAccount INT, pAgent_id INT, pStart_date TIMESTAMP, pEnd_date TIMESTAMP )
+BEGIN
+		SET @unit = 10000;
+        SET @business_cost = 0;
+        CALL sp_role_checkStaffRole( pAccount, '1,2,3,4', @check_role);
+        IF ( @check_role = 1 ) THEN
+			SET @team_name = (
+				SELECT	rt.`name`
+                FROM	`agent` ag
+					JOIN	`account` acc ON acc.`id` = ag.`staff_id`
+                    JOIN	`account_role` acr ON acr.`account_id` = acc.`id`
+                    JOIN	`role_team` rt ON rt.`id` = acr.`role_team_id`
+				WHERE	ag.`user_id` = pAgent_id
+            );
+			SET @sqls = CONCAT("
+				SELECT	'", @team_name, "' AS `team_name`,
+						agt.`agent_id`,
+						ag.`name` AS `agent_name`,
+                        st.`name` AS `store_type`,
+						COUNT(agt.`agent_id`) AS `ticket`,
+                        SUM(agt.`agency_income`) AS `revenue_agency`,
+						COUNT(agt.`agent_id`) * @unit AS `revenue`,
+                        fn_formula_getChange(SUM(agt.`agency_income`), IF(ag.`user_id` > 100000, FLOOR( ag.`user_id` / 1111 ), FLOOR( ag.`user_id` * 1000 ))) AS `revenue_change`,
+						'2.5 tỷ' AS 'investment',
+						'500 tr' AS 'gross_profit'
+				FROM	`agent_ticket` agt
+					JOIN	`agent` ag ON ag.`user_id` = agt.`agent_id`
+                    JOIN	`store_type` st ON st.`id` = ag.`store_type`
+				WHERE	agt.`agent_id`	=	", pAgent_id, "
+					AND ag.`enable`		=	1
+					AND	agt.`created_date`	BETWEEN	'", pStart_date, "' AND '", pEnd_date, "'
+				GROUP BY	agt.`agent_id`,
+							ag.`name`,
+                            st.`name`
+				HAVING		`ticket` > 1
+				ORDER BY	`ticket` DESC;");
+            PREPARE stmt FROM @sqls;
+			EXECUTE stmt;
+			DEALLOCATE PREPARE stmt;
+		END IF;
+	END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_report_agency_list`( pAccount INT, pPage INT )
+BEGIN
+		CALL sp_role_checkStaffRole( pAccount, '4', @check_role);
+        IF ( @check_role = 1 ) THEN
+			SET @paging = pPage;
+			SET @lim = 20;
+			SET @off = IF(@paging = 1, 0, (@paging - 1) * @lim);
+
+			SET @sqls = CONCAT("
+				SELECT	ag.`user_id` AS `agent_id`,
+						ag_acc.`username`,
+						ag_acc.`phone`,
+						ag_acc.`email`,
+						ag.`name` AS `agent_name`,
+						bt.`name` AS `business_type`,
+						ag.`address`,
+						IF(ag.`enable` = 1, 'YES', 'NO') AS `active`,
+						ag.`contract_type` AS `contract_type_id`,
+						ct.`name` AS `contract_status`,
+						IF(ag.`state` = 1, 'YES', 'NO') AS `state`,
+						r.`name` AS `rating`,
+						st.`name` AS `store_type`,
+						ag.`parent_id`,
+						COALESCE(parent.`username`, '') AS `parent_username`,
+						ag.`staff_id` AS `sale_owner_id`,
+						COALESCE(sale_owner.`username`, '') AS `sale_owner_username`
+				FROM	`agent` ag
+					JOIN	`account` ag_acc ON ag_acc.`id` = ag.`user_id`
+					LEFT JOIN	`account` parent ON parent.`id` = ag.`parent_id`
+					LEFT JOIN	`account` sale_owner ON sale_owner.`id` = ag.`staff_id`
+					JOIN	`contract_type` ct ON ct.`id` = ag.`contract_type`
+					JOIN	`business_type` bt ON bt.`id`	=	ag.`business_type`
+					JOIN	`store_type` st ON st.`id`		=	ag.`store_type`
+					JOIN	`rating` r ON r.`id`			=	ag.`rating`
+				ORDER BY ag.`created_date` DESC
+				LIMIT ", @off, ", ", @lim, ";");
+			PREPARE stmt FROM @sqls;
+			EXECUTE stmt;
+			DEALLOCATE PREPARE stmt;
+		END IF;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_report_agency_monthly_active_statistic`( pAccount INT, pStart_date TIMESTAMP, pEnd_date TIMESTAMP, pAgent_id INT )
+BEGIN
+		CALL sp_calendar_fill(DATE(pStart_date), DATE(pEnd_date));
+		IF ( pAgent_id = 0 )  THEN
+			SELECT	IFNULL(t.`location`, 0) AS `location`,
+					DATE_FORMAT(cal.`datefield`, '%Y-%m') AS `month`
+			FROM
+			(
+				SELECT	COUNT(ag.`id`) AS `location`,
+						DATE_FORMAT(ag.`active_date`, '%Y-%m') AS `month`
+				FROM	`agent` ag
+				WHERE	ag.`staff_id`	=	pAccount
+					AND ag.`enable`		=	1
+					AND	ag.`active_date`	BETWEEN pStart_date	AND pEnd_date
+				GROUP BY `month`
+			)  AS t
+				RIGHT JOIN `calendar` cal ON DATE_FORMAT(cal.`datefield`, '%Y-%m') = t.`month`
+			WHERE	cal.`datefield` BETWEEN pStart_date	AND pEnd_date
+			GROUP BY `location`, DATE_FORMAT(cal.`datefield`, '%Y-%m')
+			ORDER BY `month`;
+		ELSE
+			SELECT	IFNULL(t.`location`, 0) AS `location`,
+					DATE_FORMAT(cal.`datefield`, '%Y-%m') AS `month`
+			FROM
+			(
+				SELECT	COUNT(ag.`id`) AS `location`,
+						DATE_FORMAT(ag.`active_date`, '%Y-%m') AS `month`
+				FROM	`agent` ag
+					JOIN	`agent_class` agc ON agc.`agent_c2_id` = ag.`user_id`
+				WHERE	ag.`class`			=	2
+					AND agc.`agent_c1_id`	=	pAgent_id
+					AND ag.`enable`			=	1
+					AND	ag.`active_date`	BETWEEN	pStart_date	AND pEnd_date
+				GROUP BY DATE_FORMAT(ag.`active_date`, '%Y-%m')
+				ORDER BY DATE_FORMAT(ag.`active_date`, '%Y-%m')
+            )  AS t
+				RIGHT JOIN `calendar` cal ON DATE_FORMAT(cal.`datefield`, '%Y-%m') = t.`month`
+			WHERE	cal.`datefield` BETWEEN pStart_date	AND pEnd_date
+			GROUP BY `location`, DATE_FORMAT(cal.`datefield`, '%Y-%m')
+			ORDER BY `month`;
+        END IF;
+	END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_report_agency_registration_statistic`( pAccount INT, pStart_date TIMESTAMP, pEnd_date TIMESTAMP, pAgent_id INT )
+BEGIN
+		CALL sp_calendar_fill(DATE(pStart_date), DATE(pEnd_date));
+		IF ( pAgent_id = 0 )  THEN
+			SELECT	IFNULL(t.`location`, 0) AS `location`,
+					cal.`datefield` AS `date`
+			FROM
+			(
+				SELECT	COUNT(ag.`id`) AS `location`,
+					DATE(ag.`registration_date`) AS `date`
+				FROM	`agent` ag
+				WHERE	ag.`staff_id`	=	pAccount
+					AND ag.`enable`		=	1
+					AND	ag.`registration_date`	BETWEEN pStart_date AND pEnd_date
+				GROUP BY DATE(ag.`registration_date`)
+			)  AS t
+				RIGHT JOIN `calendar` cal ON cal.`datefield` = t.`date`
+            WHERE	cal.`datefield` BETWEEN pStart_date AND pEnd_date
+			ORDER BY `date`;
+		ELSE
+			SELECT	IFNULL(t.`location`, 0) AS `location`,
+					cal.`datefield` AS `date`
+			FROM
+			(
+				SELECT	COUNT(ag.`id`) AS `location`,
+						DATE(ag.`registration_date`) AS `date`
+				FROM	`agent` ag
+					JOIN	`agent_class` agc ON agc.`agent_c2_id` = ag.`user_id`
+				WHERE	ag.`class`			=	2
+					AND agc.`agent_c1_id`	=	pAgent_id
+					AND ag.`enable`			=	1
+					AND	ag.`registration_date`	BETWEEN	pStart_date	AND pEnd_date
+				GROUP BY DATE(ag.`registration_date`)
+            )  AS t
+				RIGHT JOIN `calendar` cal ON cal.`datefield` = t.`date`
+            WHERE	cal.`datefield` BETWEEN pStart_date AND pEnd_date
+			ORDER BY `date`;
+        END IF;
+	END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_report_agency_revenue_over_billion_statistic`( pAccount INT, pStart_date TIMESTAMP, pEnd_date TIMESTAMP, pAgent_id INT )
+BEGIN
+		SET @price = 10000;
+        CALL sp_calendar_fill(DATE(pStart_date), DATE(pEnd_date));
+		IF ( pAgent_id = 0 ) THEN
+			SELECT	IFNULL(t.`location`, 0) AS `location`,
+					cal.`datefield` AS `date`
+			FROM
+			(
+				SELECT	COUNT(agt.`agent_id`) AS `location`,
+						DATE(agt.`created_date`) AS `date`
+				FROM	`agent_ticket` agt
+					JOIN	`agent` ag ON ag.`user_id` = agt.`agent_id`
+				WHERE	ag.`staff_id`	=	pAccount
+					AND ag.`enable`		=	1
+					AND	agt.`created_date`	BETWEEN	pStart_date AND pEnd_date
+				GROUP BY `date`
+				HAVING COALESCE(SUM(agt.`agency_income`), 0) >= @price
+			) AS t
+			RIGHT JOIN `calendar` cal ON cal.`datefield` = t.`date`
+			WHERE	cal.`datefield` BETWEEN pStart_date AND pEnd_date
+			ORDER BY `date`;
+		ELSE
+			SELECT	IFNULL(t.`location`, 0) AS `location`,
+					cal.`datefield` AS `date`
+			FROM
+			(
+				SELECT	COUNT(agt.`id`) AS `location`,
+						DATE(agt.`created_date`) AS `date`
+				FROM	`agent_ticket` agt
+					JOIN	`agent` ag ON ag.`user_id` = agt.`agent_id`
+					JOIN	`agent_class` agc ON agc.`agent_c2_id` = ag.`user_id`
+				WHERE	ag.`class` = 2
+					AND agc.`agent_c1_id`	=	pAgent_id
+					AND ag.`enable`			=	1
+					AND	ag.`active_date`	BETWEEN	pStart_date	AND pEnd_date
+				GROUP BY DATE(agt.`created_date`)
+                HAVING COALESCE(SUM(agt.`agency_income`), 0) >= @price
+			) AS t
+				RIGHT JOIN `calendar` cal ON cal.`datefield` = t.`date`
+            WHERE	cal.`datefield` BETWEEN pStart_date AND pEnd_date
+            ORDER BY `date`;
+        END IF;
+	END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_report_agency_revenue_under_500_statistic`( pAccount INT, pStart_date TIMESTAMP, pEnd_date TIMESTAMP, pAgent_id INT )
+BEGIN
+		SET @price = 1000000;
+        CALL sp_calendar_fill(DATE(pStart_date), DATE(pEnd_date));
+		IF ( pAgent_id = 0 ) THEN
+			SELECT	IFNULL(t.`location`, 0) AS `location`,
+					cal.`datefield` AS `date`
+			FROM
+			(
+				SELECT	COUNT(agt.`agent_id`) AS `location`,
+						DATE(agt.`created_date`) AS `date`
+				FROM	`agent_ticket` agt
+					JOIN	`agent` ag ON ag.`user_id` = agt.`agent_id`
+				WHERE	ag.`staff_id`	=	pAccount
+					AND ag.`enable`		=	1
+					AND	agt.`created_date`	BETWEEN	pStart_date AND pEnd_date
+				GROUP BY `date`
+				HAVING COALESCE(SUM(agt.`agency_income`), 0) < @price
+			) AS t
+			RIGHT JOIN `calendar` cal ON cal.`datefield` = t.`date`
+			WHERE	cal.`datefield` BETWEEN pStart_date AND pEnd_date
+			ORDER BY `date`;
+		ELSE
+			SELECT	IFNULL(t.`location`, 0) AS `location`,
+					cal.`datefield` AS `date`
+			FROM
+			(
+				SELECT	COUNT(agt.`id`) AS `location`,
+						DATE(agt.`created_date`) AS `date`
+				FROM	`agent_ticket` agt
+					JOIN	`agent` ag ON ag.`user_id` = agt.`agent_id`
+					JOIN	`agent_class` agc ON agc.`agent_c2_id` = ag.`user_id`
+				WHERE	ag.`class` = 2
+					AND agc.`agent_c1_id`	=	pAgent_id
+					AND ag.`enable`			=	1
+					AND	ag.`active_date`	BETWEEN	pStart_date	AND pEnd_date
+				GROUP BY DATE(agt.`created_date`)
+                HAVING COALESCE(SUM(agt.`agency_income`), 0) < @price
+			) AS t
+				RIGHT JOIN `calendar` cal ON cal.`datefield` = t.`date`
+            WHERE	cal.`datefield` BETWEEN pStart_date AND pEnd_date
+            ORDER BY `date`;
+        END IF;
+	END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_report_agency_total`( pAccount INT )
+BEGIN
+		CALL sp_role_checkStaffRole( pAccount, '4', @check_role);
+        IF ( @check_role = 1 ) THEN
+			SET @lim = 20;
+			SET @total = (	SELECT	COUNT(*)
+							FROM	`agent` ag
+								JOIN	`account` ag_acc ON ag_acc.`id` = ag.`user_id`
+								LEFT JOIN	`account` parent ON parent.`id` = ag.`parent_id`
+								LEFT JOIN	`account` sale_owner ON sale_owner.`id` = ag.`staff_id`
+								JOIN	`contract_type` ct ON ct.`id` = ag.`contract_type`
+								JOIN	`business_type` bt ON bt.`id`	=	ag.`business_type`
+								JOIN	`store_type` st ON st.`id`		=	ag.`store_type`
+								JOIN	`rating` r ON r.`id`			=	ag.`rating`
+						);
+			IF ( @total = 0 ) THEN
+				SELECT 0 AS `total`;
+			ELSEIF ( @total <= @lim ) THEN
+				SELECT 1 AS `total`;
+			ELSE
+				SELECT FLOOR(@total / @lim) + 1 AS `total`;
+			END IF;
+		END IF;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_report_agency_update`(
+                    pAccount INT, pAgent_id INT, pUsername VARCHAR(100), pPassword VARCHAR(100), pAgent_name VARCHAR(100), pPhone VARCHAR(50),
+                    pEmail VARCHAR(255), pStore_type TINYINT, pCity VARCHAR(100), pReference VARCHAR(100), pBusiness_type TINYINT,
+                    pRating TINYINT, pRatio TINYINT, pSale_owner VARCHAR(100) )
+BEGIN
+		CALL sp_role_checkStaffRole( pAccount, '4', @check_role);
+        IF ( @check_role = 1 ) THEN
+			/*IF EXISTS ( SELECT `id` FROM `account` WHERE `username` = pUsername ) THEN
+				SELECT -2 AS 'result', 'username đã tồn tại' AS 'msg';*/
+			IF EXISTS ( SELECT `id` FROM `account` WHERE `email` = pEmail AND `id` <> pAgent_id ) THEN
+				SELECT -3 AS 'result', 'email đã tồn tại' AS 'msg';
+			ELSE
+				SET @ratio_default = 5;
+                SET @sale_owner_id = COALESCE(( SELECT `id` FROM `account` WHERE `username` = pSale_owner ), 0);
+				SET @parent_id = COALESCE(( SELECT `id` FROM `account` WHERE `username` = pReference ), 0);
+				IF @parent_id <> 0 THEN
+					SET @user_type = 2;
+				ELSE
+					SET @user_type = 1;
+				END IF;
+
+				IF	pPassword <> '' THEN
+					UPDATE	`account`
+					SET		`password`	=	pPassword
+					WHERE	`id`		=	pAgent_id;
+				END IF;
+				
+				UPDATE	`account`
+				SET		`full_name`	=	pAgent_name,
+						`phone`		=	pPhone,
+						`email`		=	pEmail,
+						`user_type`	=	@user_type
+				WHERE	`id`		=	pAgent_id;
+				
+				UPDATE	`agent`
+				SET		`name`			=	pAgent_name,
+						`store_type`	=	pStore_type,
+						`business_type`	=	pBusiness_type,
+						`city`			=	pCity,
+						`rating`		=	pRating,
+						`ratio`			=	IF(pRatio = 0, @ratio_default, pRatio),
+						`class`			=	@user_type,
+                        `parent_id`		=	@parent_id,
+                        `staff_id`		=	@sale_owner_id
+				WHERE	`user_id`		=	pAgent_id;
+				SELECT 1 AS 'result', 'update thành công' AS 'msg';
+			END IF;
+		ELSE
+			SELECT -1 AS 'result', 'account không có quyền update' AS 'msg';
+		END IF;
+	END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_report_agency_update_active_status`( pAgent_id INT, pActive_status TINYINT )
+BEGIN
+		UPDATE	`agent`
+        SET		`enable`	=	pActive_status
+        WHERE	`user_id`	=	pAgent_id;
+        
+        SELECT 1 AS 'result';
+	END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_report_agency_update_contract_status`( pAgent_id INT, pContract_status TINYINT )
+BEGIN
+		UPDATE	`agent`
+        SET		`contract_type`	=	pContract_status,
+				`contract_status`=	IF(pContract_status = 1, 'Duyệt', 'Chưa ký')
+        WHERE	`user_id`		=	pAgent_id;
+        
+        SELECT 1 AS 'result';
+	END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_report_agency_update_state`( pAgent_id INT, pState TINYINT )
+BEGIN
+		UPDATE	`agent`
+        SET		`state`		=	pState
+        WHERE	`user_id`	=	pAgent_id;
+        
+        SELECT 1 AS 'result';
+	END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_report_campaign_create`( pAccount INT, pAgent_id INT, pExpected_revenue VARCHAR(50), pAdditional_revenue VARCHAR(50), pSale_owner_id INT, pStart_date TIMESTAMP, pEnd_date TIMESTAMP )
+BEGIN
+		CALL sp_role_checkStaffRole( pAccount, '1,2,3,4', @check_role);
+        IF ( @check_role = 1 ) THEN
+			INSERT INTO `business_plan`
+			(
+				`account_id`,
+				`agent_id`,
+				`expected_revenue`,
+				`additional_revenue`,
+				`start_date`,
+				`end_date`
+			)
+			VALUES
+			(
+				pSale_owner_id,
+				pAgent_id,
+				pExpected_revenue,
+				pAdditional_revenue,
+				pStart_date,
+				pEnd_date
+			);
+			SELECT ROW_COUNT() AS 'result';
+		END IF;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_report_campaign_detail`( pAccount INT, pCampaign_id INT )
+BEGIN
+		CALL sp_role_checkStaffRole( pAccount, '1,2,3,4', @check_role);
+        IF ( @check_role = 1 ) THEN
+				SELECT	bp.`id` AS `campaign_id`,
+						ag.`user_id` AS `agent_id`,
+						ag.`name` AS `agent_name`,
+						bp.`expected_revenue`,
+						bp.`additional_revenue`,
+                        acc.`id` AS `staff_id`,
+						acc.`username` AS `staff_name`,
+						DATE(bp.`start_date`) AS `start_date`,
+                        DATE(bp.`end_date`) AS `end_date`
+				FROM	`business_plan` bp
+					JOIN	`agent` ag ON ag.`user_id` = bp.`agent_id`
+					JOIN	`account` acc ON acc.`id` = bp.`account_id`
+				WHERE	bp.`id`	=	pCampaign_id;
+		END IF;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_report_campaign_list`( pAccount INT, pStart_date TIMESTAMP, pEnd_date TIMESTAMP, pPage INT )
+BEGIN
+		CALL sp_role_checkStaffRole( pAccount, '1,2,3,4', @check_role);
+        IF ( @check_role = 1 ) THEN
+			SET @paging = ABS(pPage);
+			SET @lim = 20;
+			SET @off = IF(@paging = 1, 0, (@paging - 1) * @lim);
+
+			SET @sqls = CONCAT("
+				SELECT	ag.`user_id` AS `agent_id`,
+						ag.`name` AS `agent_name`,
+						0 AS `total_ticket`,
+						0 AS `total_revenue`,
+						bp.`expected_revenue` AS `total_expect_revenue`,
+						0 AS `revenue_change`,
+						bp.`additional_revenue` AS `marketing_cost`,
+						CONCAT(0 - bp.`expected_revenue`, 'k') AS `roi`,
+						IF(0 > bp.`expected_revenue`, 'Chấp nhận', 'Không đạt') AS `result`
+				FROM	`business_plan` bp
+					JOIN	`agent` ag ON ag.`user_id` = bp.`agent_id`
+					JOIN	`account` acc ON acc.`id` = bp.`account_id`
+				WHERE	bp.`end_date`	<=	'", pEnd_date, "'
+				LIMIT ", @off, ", ", @lim, ";");
+			PREPARE stmt FROM @sqls;
+			EXECUTE stmt;
+			DEALLOCATE PREPARE stmt;
+		END IF;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_report_campaign_review`( pAccount INT, pPage INT )
+BEGIN
+		CALL sp_role_checkStaffRole( pAccount, '1,2,3,4', @check_role);
+        IF ( @check_role = 1 ) THEN
+			SET @paging = ABS(pPage);
+			SET @lim = 20;
+			SET @off = IF(@paging = 1, 0, (@paging - 1) * @lim);
+
+			SET @sqls = CONCAT("
+				SELECT	bp.`id` AS `campaign_id`,
+						ag.`name` AS `agent_name`,
+						bp.`expected_revenue`,
+						bp.`additional_revenue`,
+						acc.`username` AS `staff_name`,
+						CONCAT(DATE(bp.`start_date`), ' - ', DATE(bp.`end_date`)) AS `running_time`
+				FROM	`business_plan` bp
+					JOIN	`agent` ag ON ag.`user_id` = bp.`agent_id`
+					JOIN	`account` acc ON acc.`id` = bp.`account_id`
+				WHERE	bp.`enable`	=	1
+				LIMIT ", @off, ", ", @lim, ";");
+			PREPARE stmt FROM @sqls;
+			EXECUTE stmt;
+			DEALLOCATE PREPARE stmt;
+		END IF;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_report_campaign_review_search`( pAccount INT, pAgent_name VARCHAR(100), pPage INT )
+BEGIN
+		CALL sp_role_checkStaffRole( pAccount, '1,2,3,4', @check_role);
+        IF ( @check_role = 1 ) THEN
+			SET @paging = ABS(pPage);
+			SET @lim = 20;
+			SET @off = IF(@paging = 1, 0, (@paging - 1) * @lim);
+
+			SET @sqls = CONCAT("
+				SELECT	bp.`id` AS `campaign_id`,
+						ag.`name` AS `agent_name`,
+						bp.`expected_revenue`,
+						bp.`additional_revenue`,
+						acc.`username` AS `staff_name`,
+						CONCAT(DATE(bp.`start_date`), ' - ', DATE(bp.`end_date`)) AS `running_time`
+				FROM	`business_plan` bp
+					JOIN	`agent` ag ON ag.`user_id` = bp.`agent_id`
+					JOIN	`account` acc ON acc.`id` = bp.`account_id`
+				WHERE	ag.`name` LIKE '", pAgent_name, "%'
+					AND	bp.`enable`	=	1
+				LIMIT ", @off, ", ", @lim, ";");
+			PREPARE stmt FROM @sqls;
+			EXECUTE stmt;
+			DEALLOCATE PREPARE stmt;
+		END IF;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_report_campaign_review_search_total`( pAccount INT, pAgent_name VARCHAR(100) )
+BEGIN
+		CALL sp_role_checkStaffRole( pAccount, '1,2,3,4', @check_role);
+        IF ( @check_role = 1 ) THEN
+			SET @lim = 20;
+			SET @total =(	SELECT	COUNT(*)
+							FROM	`business_plan` bp
+								JOIN	`agent` ag ON ag.`user_id` = bp.`agent_id`
+								JOIN	`account` acc ON acc.`id` = bp.`account_id`
+							WHERE	ag.`name`	LIKE	CONCAT('%', pAgent_name, '%')
+								AND	bp.`enable`	=	1
+						);
+			IF ( @total = 0 ) THEN
+				SELECT 0 AS `total`;
+            ELSEIF ( @total <= @lim ) THEN
+				SELECT 1 AS `total`;
+			ELSE
+				SELECT FLOOR(@total / @lim) + 1 AS `total`;
+            END IF;
+		END IF;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_report_campaign_review_total`( pAccount INT )
+BEGIN
+		CALL sp_role_checkStaffRole( pAccount, '1,2,3,4', @check_role);
+        IF ( @check_role = 1 ) THEN
+			SET @lim = 20;
+			SET @total =(	SELECT	COUNT(*)
+							FROM	`business_plan` bp
+								JOIN	`agent` ag ON ag.`user_id` = bp.`agent_id`
+								JOIN	`account` acc ON acc.`id` = bp.`account_id`
+							WHERE	bp.`enable`	=	1
+						);
+			IF ( @total = 0 ) THEN
+				SELECT 0 AS `total`;
+            ELSEIF ( @total <= @lim ) THEN
+				SELECT 1 AS `total`;
+			ELSE
+				SELECT FLOOR(@total / @lim) + 1 AS `total`;
+            END IF;
+		END IF;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_report_campaign_search`( pAccount INT, pStart_date TIMESTAMP, pEnd_date TIMESTAMP, pName VARCHAR(50), pPage INT )
+BEGIN
+		CALL sp_role_checkStaffRole( pAccount, '1,2,3,4', @check_role);
+        IF ( @check_role = 1 ) THEN
+			SET @paging = ABS(pPage);
+			SET @lim = 20;
+			SET @off = IF(@paging = 1, 0, (@paging - 1) * @lim);
+
+			SET @sqls = CONCAT("
+				SELECT	ag.`user_id` AS `agent_id`,
+						ag.`name` AS `agent_name`,
+						0 AS `total_ticket`,
+						0 AS `total_revenue`,
+						bp.`expected_revenue` AS `total_expect_revenue`,
+						0 AS `revenue_change`,
+						bp.`additional_revenue` AS `marketing_cost`,
+						CONCAT(0 - bp.`expected_revenue`, 'k') AS `roi`,
+						IF(0 > bp.`expected_revenue`, 'Chấp nhận', 'Không đạt') AS `result`
+				FROM	`business_plan` bp
+					JOIN	`agent` ag ON ag.`user_id` = bp.`agent_id`
+					JOIN	`account` acc ON acc.`id` = bp.`agent_id`
+				WHERE	(ag.`name` LIKE '%", pName, "%' OR acc.`username` LIKE '%", pName, "%')
+					AND	bp.`end_date`	<=	'", pEnd_date, "'
+				LIMIT ", @off, ", ", @lim, ";");
+			PREPARE stmt FROM @sqls;
+			EXECUTE stmt;
+			DEALLOCATE PREPARE stmt;
+		END IF;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_report_campaign_search_total`( pAccount INT, pStart_date TIMESTAMP, pEnd_date TIMESTAMP, pName VARCHAR(50) )
+BEGIN
+		CALL sp_role_checkStaffRole( pAccount, '1,2,3,4', @check_role);
+        IF ( @check_role = 1 ) THEN
+			SET @lim = 20;
+			SET @total =(	SELECT	COUNT(*)
+							FROM	`business_plan` bp
+								JOIN	`agent` ag ON ag.`user_id` = bp.`agent_id`
+								JOIN	`account` acc ON acc.`id` = bp.`agent_id`
+							WHERE	(ag.`name` LIKE CONCAT('%', pName, '%') OR acc.`username` LIKE CONCAT('%', pName, '%'))
+								AND	bp.`end_date`	<=	pEnd_date
+						);
+			IF ( @total = 0 ) THEN
+				SELECT 0 AS `total`;
+			ELSEIF ( @total <= @lim ) THEN
+				SELECT 1 AS `total`;
+			ELSE
+				SELECT FLOOR(@total / @lim) + 1 AS `total`;
+			END IF;
+		END IF;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_report_campaign_total`( pAccount INT, pStart_date TIMESTAMP, pEnd_date TIMESTAMP )
+BEGIN
+		CALL sp_role_checkStaffRole( pAccount, '1,2,3,4', @check_role);
+        IF ( @check_role = 1 ) THEN
+			SET @lim = 20;
+			SET @total =(	SELECT	COUNT(*)
+							FROM	`business_plan` bp
+								JOIN	`agent` ag ON ag.`user_id` = bp.`agent_id`
+								JOIN	`account` acc ON acc.`id` = bp.`account_id`
+							WHERE	bp.`end_date`	<=	pEnd_date
+						);
+			IF ( @total = 0 ) THEN
+				SELECT 0 AS `total`;
+			ELSEIF ( @total <= @lim ) THEN
+				SELECT 1 AS `total`;
+			ELSE
+				SELECT FLOOR(@total / @lim) + 1 AS `total`;
+			END IF;
+		END IF;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_report_campaign_update`( pAccount INT, pCampaign_id INT, pAgent_id INT, pExpected_revenue VARCHAR(50), pAdditional_revenue VARCHAR(50), pSale_owner_id INT, pStart_date TIMESTAMP, pEnd_date TIMESTAMP )
+BEGIN
+		CALL sp_role_checkStaffRole( pAccount, '1,2,3,4', @check_role);
+        IF ( @check_role = 1 ) THEN
+			UPDATE	`business_plan`
+			SET		`account_id`		= pSale_owner_id,
+					`agent_id`			= pAgent_id,
+					`expected_revenue`	= pExpected_revenue,
+					`additional_revenue`= pAdditional_revenue,
+					`start_date`		= pStart_date,
+					`end_date`			= pEnd_date
+			WHERE	`id` = pCampaign_id;
+
+			SELECT ROW_COUNT() AS 'result';
+		END IF;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_report_daily_revenue_agency_statistic`( pAccount INT, pStart_date TIMESTAMP, pEnd_date TIMESTAMP, pAgent_id INT )
+BEGIN
+		SET @unit = 10000;
+        SET @business_cost = 0;
+        
+		IF ( pAgent_id = 0 )  THEN
+			SELECT	SUM(agt.`agency_income`) AS `revenue_agency`,
+                    (FLOOR(2 + RAND(DAY(pStart_date)) * 5 ) - FLOOR(2 + RAND(DAY(pEnd_date)) * 5)) * SUM(agt.`agency_income`) AS `previous_revenue_agency`,
+					DATE(agt.`created_date`) AS `date`
+			FROM	`agent_ticket` agt
+				JOIN	`agent` ag ON ag.`user_id` = agt.`agent_id`
+			WHERE	ag.`staff_id`	=	pAccount
+				AND ag.`enable`		=	1
+                AND	agt.`created_date`	BETWEEN	pStart_date	AND pEnd_date
+			GROUP BY DATE(agt.`created_date`);
+        ELSE
+			SELECT	SUM(agt.`agency_income`) AS `revenue_agency`,
+                    (FLOOR(2 + RAND(DAY(pStart_date)) * 5 ) - FLOOR(2 + RAND(DAY(pEnd_date)) * 5)) * SUM(agt.`agency_income`) AS `previous_revenue_agency`,
+					DATE(agt.`created_date`) AS `date`
+			FROM	`agent_ticket` agt
+				JOIN	`agent` ag ON ag.`user_id` = agt.`agent_id`
+				JOIN	`agent_class` agc ON agc.`agent_c2_id` = ag.`user_id`
+			WHERE	ag.`class` = 2
+				AND agc.`agent_c1_id`	=	pAgent_id
+				AND ag.`enable`			=	1
+				AND	agt.`created_date`	BETWEEN	pStart_date	AND pEnd_date
+			GROUP BY DATE(agt.`created_date`);
+		END IF;
+	END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_report_daily_revenue_me_statistic`( pAccount INT, pStart_date TIMESTAMP, pEnd_date TIMESTAMP, pAgent_id INT )
+BEGIN
+		SET @unit = 10000;
+        SET @business_cost = 0;
+        
+		IF ( pAgent_id = 0 )  THEN
+			SELECT	SUM(agt.`me_income`) -  @business_cost AS `revenue_me`,
+                    (FLOOR(2 + RAND(DAY(pStart_date)) * 5 ) - FLOOR(2 + RAND(DAY(pEnd_date)) * 5)) * SUM(agt.`agency_income`) AS `previous_revenue_me`,
+					DATE(agt.`created_date`) AS `date`
+			FROM	`agent_ticket` agt
+				JOIN	`agent` ag ON ag.`user_id` = agt.`agent_id`
+			WHERE	ag.`staff_id`	=	pAccount
+				AND ag.`enable`		=	1
+                AND	agt.`created_date`	BETWEEN	pStart_date	AND pEnd_date
+			GROUP BY DATE(agt.`created_date`);
+        ELSE
+			SELECT	SUM(agt.`me_income`) -  @business_cost AS `revenue_me`,
+                    (FLOOR(2 + RAND(DAY(pStart_date)) * 5 ) - FLOOR(2 + RAND(DAY(pEnd_date)) * 5)) * SUM(agt.`agency_income`) AS `previous_revenue_me`,
+					DATE(agt.`created_date`) AS `date`
+			FROM	`agent_ticket` agt
+				JOIN	`agent` ag ON ag.`user_id` = agt.`agent_id`
+				JOIN	`agent_class` agc ON agc.`agent_c2_id` = ag.`user_id`
+			WHERE	ag.`class` = 2
+				AND agc.`agent_c1_id`	=	pAgent_id
+				AND ag.`enable`			=	1
+				AND	agt.`created_date`	BETWEEN	pStart_date	AND pEnd_date
+			GROUP BY DATE(agt.`created_date`);
+		END IF;
+	END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_report_daily_revenue_statistic`( pAccount INT, pStart_date TIMESTAMP, pEnd_date TIMESTAMP, pAgent_id INT )
+BEGIN
+		SET @unit = 10000;
+        SET @business_cost = 0;
+        
+		IF ( pAgent_id = 0 )  THEN
+			SELECT	COUNT(agt.`id`) * @unit AS `revenue`,
+                    (FLOOR(2 + RAND(DAY(pStart_date)) * 5 ) - FLOOR(2 + RAND(DAY(pEnd_date)) * 5)) * COUNT(agt.`id`) * @unit AS `previous_revenue`,
+					DATE(agt.`created_date`) AS `date`
+			FROM	`agent_ticket` agt
+				JOIN	`agent` ag ON ag.`user_id` = agt.`agent_id`
+			WHERE	ag.`staff_id`	=	pAccount
+				AND ag.`enable`		=	1
+                AND	agt.`created_date`	BETWEEN	pStart_date	AND pEnd_date
+			GROUP BY DATE(agt.`created_date`);
+        ELSE
+			SELECT	COUNT(agt.`id`) * @unit AS `revenue`,
+                    (FLOOR(2 + RAND(DAY(pStart_date)) * 5 ) - FLOOR(2 + RAND(DAY(pEnd_date)) * 5)) * @unit AS `previous_revenue`,
+					DATE(agt.`created_date`) AS `date`
+			FROM	`agent_ticket` agt
+				JOIN	`agent` ag ON ag.`user_id` = agt.`agent_id`
+				JOIN	`agent_class` agc ON agc.`agent_c2_id` = ag.`user_id`
+			WHERE	ag.`class` = 2
+				AND agc.`agent_c1_id`	=	pAgent_id
+				AND ag.`enable`			=	1
+				AND	agt.`created_date`	BETWEEN	pStart_date	AND pEnd_date
+			GROUP BY DATE(agt.`created_date`);
+		END IF;
+	END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_report_getGroupBusiness`( pAccount INT )
+BEGIN
+		SELECT	*
+        FROM	`account_role` acr
+			JOIN	`account` acc ON acc.`id` = acr.`account_id`
+            JOIN	`role` r ON r.`id` = acr.``
+            JOIN	`role_team`	rt ON rt.`role_id` = acr.``;
+	END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_report_group_business_statistic`( pAccount INT, pTeam_id INT, pStart_date TIMESTAMP, pEnd_date TIMESTAMP )
+BEGIN
+		SET @unit = 10000;
+        SET @business_cost = 0;
+        CALL sp_role_checkStaffRole( pAccount, '1,2,3,4', @check_role);
+        IF ( @check_role = 1 ) THEN
+			SET @sqls = CONCAT("SET @list_id = (
+                            SELECT	GROUP_CONCAT(acr.`account_id`)
+							FROM	`account_role` acr
+							WHERE	acr.`role_team_id` = ", pTeam_id, "
+						)");
+			PREPARE stmt FROM @sqls;
+			EXECUTE stmt;
+            
+			SET @sqls = CONCAT("
+				SELECT	agt.`agent_id`,
+						ag.`name` AS `agent_name`,
+                        st.`name` AS `store_type`,
+						COUNT(agt.`agent_id`) AS `ticket`,
+                        SUM(agt.`agency_income`) AS `revenue_agency`,
+						COUNT(agt.`agent_id`) * @unit AS `revenue`,
+                        fn_formula_getChange(SUM(agt.`agency_income`), IF(ag.`user_id` > 100000, FLOOR( ag.`user_id` / 1111 ), FLOOR( ag.`user_id` * 1000 ))) AS `revenue_change`,
+						'2.5 tỷ' AS 'investment',
+						'500 tr' AS 'gross_profit'
+				FROM	`agent_ticket` agt
+					JOIN	`agent` ag ON ag.`user_id` = agt.`agent_id`
+                    JOIN	`store_type` st ON st.`id` = ag.`store_type`
+				WHERE	ag.`staff_id`	IN	( ", @list_id, " )
+					AND ag.`enable`		=	1
+					AND	agt.`created_date`	BETWEEN	'", pStart_date, "' AND '", pEnd_date, "'
+				GROUP BY	agt.`agent_id`,
+							ag.`name`,
+                            st.`name`
+				HAVING		`ticket` > 1
+				ORDER BY	`ticket` DESC;");
+            PREPARE stmt FROM @sqls;
+			EXECUTE stmt;
+			DEALLOCATE PREPARE stmt;
+		END IF;
+	END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_report_revenue_statistic`( pAccount INT, pStart_date TIMESTAMP, pEnd_date TIMESTAMP, pAgent_id INT )
+BEGIN
+		SET @unit = 10000;
+        SET @business_cost = 0;
+        CALL sp_calendar_fill(DATE(pStart_date), DATE(pEnd_date));
+		IF ( pAgent_id = 0 )  THEN
+			SELECT	IFNULL(t.`total_revenue`, 0) AS `total_revenue`,
+					IFNULL(t.`total_revenue_agency`, 0) AS `total_revenue_agency`,
+                    IFNULL(t.`total_revenue_me`, 0) AS `total_revenue_me`,
+					cal.`datefield` AS `date`
+			FROM
+			(
+				SELECT	COUNT(agt.`id`) * @unit AS `total_revenue`,
+						SUM(agt.`agency_income`) AS `total_revenue_agency`,
+						SUM(agt.`me_income`) -  @business_cost AS `total_revenue_me`,
+						DATE(agt.`created_date`) AS `date`
+				FROM	`agent_ticket` agt
+					JOIN	`agent` ag ON ag.`user_id` = agt.`agent_id`
+				WHERE	ag.`staff_id`	=	pAccount
+					AND ag.`enable`		=	1
+					AND	agt.`created_date`	BETWEEN	pStart_date	AND pEnd_date
+				GROUP BY DATE(agt.`created_date`)
+			) AS t
+				RIGHT JOIN `calendar` cal ON cal.`datefield` = t.`date`
+            WHERE	cal.`datefield` BETWEEN pStart_date AND pEnd_date
+            ORDER BY `date`;
+		ELSE
+			SELECT	IFNULL(t.`total_revenue`, 0) AS `total_revenue`,
+					IFNULL(t.`total_revenue_agency`, 0) AS `total_revenue_agency`,
+                    IFNULL(t.`total_revenue_me`, 0) AS `total_revenue_me`,
+					cal.`datefield` AS `date`
+			FROM
+			(
+				SELECT	COUNT(agt.`id`) * @unit AS `total_revenue`,
+						SUM(agt.`agency_income`) AS `total_revenue_agency`,
+						SUM(agt.`me_income`) -  @business_cost AS `total_revenue_me`,
+						DATE(agt.`created_date`) AS `date`
+				FROM	`agent_ticket` agt
+					JOIN	`agent` ag ON ag.`user_id` = agt.`agent_id`
+					JOIN	`agent_class` agc ON agc.`agent_c2_id` = ag.`user_id`
+				WHERE	ag.`class` = 2
+					AND agc.`agent_c1_id`	=	pAgent_id
+					AND ag.`enable`			=	1
+					AND	agt.`created_date`	BETWEEN	pStart_date	AND pEnd_date
+				GROUP BY DATE(agt.`created_date`)
+            ) AS t
+				RIGHT JOIN `calendar` cal ON cal.`datefield` = t.`date`
+            WHERE	cal.`datefield` BETWEEN pStart_date AND pEnd_date
+            ORDER BY `date`;
+		END IF;
+	END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_report_ticket_log`( pAccount INT, pTicket_info VARCHAR(500), pPage INT )
+BEGIN
+		CALL sp_role_checkStaffRole( pAccount, '1,2,3,4', @check_role);
+        IF ( @check_role = 1 ) THEN
+			SET @sqls = CONCAT("
+				SELECT	tmp.`agent_id`,
+						tmp.`agent_name`,
+						tmp.`agent_account_name` AS `agent_owner_name`,
+						tmp.`agent_address`,
+						tt.`name` AS `ticket_type`,
+						tmp.`ticket_code`,
+						tmp.`buy_date`
+				FROM	`tmp_ticket_winning` tmp
+					JOIN `ticket_type` tt ON tt.`id` = tmp.`ticket_type`
+				WHERE	CASE
+							WHEN '", pTicket_info, "' = '' THEN 1 = 1
+							ELSE tmp.`ticket_code` LIKE '", pTicket_info, "%'
+						END;
+				");
+			PREPARE stmt FROM @sqls;
+			EXECUTE stmt;
+			DEALLOCATE PREPARE stmt;
+		END IF;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_report_ticket_log_total`( pAccount INT, pTicket_info VARCHAR(500) )
+BEGIN
+		SELECT 1 AS 'total';
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_report_ticket_winning`( pAccount INT, pTicket_number VARCHAR(100), pPage INT )
+BEGIN
+		CALL sp_role_checkStaffRole( pAccount, '1,2,3,4', @check_role);
+        IF ( @check_role = 1 ) THEN
+			SET @sqls = CONCAT("
+				SELECT	tmp.`agent_id`,
+						tmp.`agent_name`,
+						tmp.`agent_account_name` AS `agent_owner_name`,
+						tmp.`agent_address`,
+						tt.`name` AS `ticket_type`,
+						tmp.`ticket_code`,
+						tmp.`buy_date`,
+						tmp.`winning_price`
+				FROM	`tmp_ticket_winning` tmp
+					JOIN `ticket_type` tt ON tt.`id` = tmp.`ticket_type`
+				WHERE	CASE
+							WHEN '", pTicket_number, "' = '' THEN 1 = 1
+							ELSE tmp.`ticket_code` LIKE '", pTicket_number, "%'
+						END;
+				");
+			PREPARE stmt FROM @sqls;
+			EXECUTE stmt;
+			DEALLOCATE PREPARE stmt;
+		END IF;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_report_ticket_winning_list_drawing`( pAccount INT, pPage INT )
+BEGIN
+		CALL sp_role_checkStaffRole( pAccount, '1,2,3,4', @check_role);
+        IF ( @check_role = 1 ) THEN
+			SET @paging = ABS(pPage);
+			SET @lim = 20;
+			SET @off = IF(@paging = 1, 0, (@paging - 1) * @lim);
+
+			SET @sqls = CONCAT("
+				SELECT	tw.`drawing_date`,
+						tw.`state`
+				FROM	`ticket_winning` tw
+                WHERE	tw.`ticket_type`	=	1
+				ORDER BY tw.`drawing_date`
+				LIMIT ", @off, ", ", @lim, ";");
+			PREPARE stmt FROM @sqls;
+			EXECUTE stmt;
+			DEALLOCATE PREPARE stmt;
+		END IF;
+	END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_report_ticket_winning_list_drawing_total`( pAccount INT )
+BEGIN
+		CALL sp_role_checkStaffRole( pAccount, '1,2,3,4', @check_role);
+        IF ( @check_role = 1 ) THEN
+			SET @lim = 20;
+			SET @total =(	SELECT	COUNT(*)
+							FROM	`ticket_winning` tw
+                            WHERE	tw.`ticket_type`	=	1
+						);
+			IF ( @total = 0 ) THEN
+				SELECT 0 AS `total`;
+			ELSEIF ( @total <= @lim ) THEN
+				SELECT 1 AS `total`;
+			ELSE
+				SELECT FLOOR(@total / @lim) + 1 AS `total`;
+			END IF;
+		END IF;
+	END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_report_ticket_winning_total`( pAccount INT, pTicket_number VARCHAR(100) )
+BEGIN
+		SELECT 1 AS 'total';
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_report_top_agency`( pAccount INT, pStart_date TIMESTAMP, pEnd_date TIMESTAMP, pAgent_id INT )
+BEGIN
+		SET @unit = 10000;
+        SET @business_cost = 0;
+		IF ( pAgent_id = 0 )  THEN
+			SELECT	ag.`user_id` AS `agent_id`,
+					ag.`name` AS `agent_name`,
+                    ag.`class` AS `agent_level`,
+                    COUNT(agt.`id`)	AS `total_ticket`,
+                    COUNT(agt.`id`) * @unit AS `total_revenue`,
+                    SUM(agt.`agency_income`) AS `total_revenue_agency`,
+                    SUM(agt.`me_income`) -  @business_cost AS `total_revenue_me`,
+                    fn_formula_getChange(FLOOR( 5 + RAND(DAY(pStart_date)) * 40 ), FLOOR( 5 + RAND(DAY(pEnd_date)) * 40 )) AS `revenue_change`
+            FROM	`agent_ticket` agt
+				JOIN	`agent` ag ON ag.`user_id` = agt.`agent_id`
+			WHERE	ag.`staff_id`	= pAccount
+				AND	ag.`enable`		= 1
+                AND	agt.`created_date`	BETWEEN	pStart_date	AND pEnd_date
+			GROUP BY ag.`id`
+			ORDER BY `total_revenue` DESC
+            LIMIT 10;
+		ELSE
+			SELECT	ag.`user_id` AS `agent_id`,
+					ag.`name` AS `agent_name`,
+                    ag.`class` AS `agent_level`,
+                    COUNT(agt.`id`)	AS `total_ticket`,
+                    COUNT(agt.`id`) * @unit AS `total_revenue`,
+                    SUM(agt.`agency_income`) AS `total_revenue_agency`,
+                    SUM(agt.`me_income`) -  @business_cost AS `total_revenue_me`,
+                    fn_formula_getChange(FLOOR( 5 + RAND(DAY(pStart_date)) * 40 ), FLOOR( 5 + RAND(DAY(pEnd_date)) * 40 )) AS `revenue_change`
+            FROM	`agent_ticket` agt
+				JOIN	`agent` ag ON ag.`user_id` = agt.`agent_id`
+                JOIN	`agent_class` agc ON agc.`agent_c2_id` = ag.`user_id`
+			WHERE	ag.`class` = 2
+				AND agc.`agent_c1_id`	=	pAgent_id
+				AND ag.`enable`			=	1
+                AND	agt.`created_date`	BETWEEN	pStart_date	AND pEnd_date
+			GROUP BY ag.`id`
+			ORDER BY `total_revenue` DESC
+            LIMIT 10;
+        END IF;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_report_top_ticket`( pAccount INT, pStart_date TIMESTAMP, pEnd_date TIMESTAMP, pAgent_id INT )
+BEGIN
+		SET @unit = 10000;
+        SET @business_cost = 0;
+		IF ( pAgent_id = 0 )  THEN
+			SELECT	agt.`ticket_type`,
+					tt.`name` AS `ticket_name`,
+                    COUNT(agt.`id`)	AS `total_ticket`,
+                    COUNT(agt.`id`) * @unit AS `total_revenue`,
+                    SUM(agt.`agency_income`) AS `total_revenue_agency`,
+                    SUM(agt.`me_income`) -  @business_cost AS `total_revenue_me`,
+                    fn_formula_getChange(FLOOR( 5 + RAND(DAY(pStart_date)) * 40 ), FLOOR( 5 + RAND(DAY(pEnd_date)) * 40 )) AS `revenue_change`
+            FROM	`agent_ticket` agt
+				JOIN	`agent` ag ON ag.`user_id` = agt.`agent_id`
+                JOIN	`ticket_type` tt ON tt.`id` = agt.`ticket_type`
+			WHERE	ag.`staff_id`	= pAccount
+				AND	ag.`enable`		= 1
+                AND	agt.`created_date`	BETWEEN	pStart_date	AND pEnd_date
+			GROUP BY agt.`ticket_type`
+			ORDER BY `total_ticket` DESC
+            LIMIT 10;
+		ELSE
+			SELECT	agt.`ticket_type`,
+					tt.`name` AS `ticket_name`,
+                    COUNT(agt.`id`)	AS `total_ticket`,
+                    COUNT(agt.`id`) * @unit AS `total_revenue`,
+                    SUM(agt.`agency_income`) AS `total_revenue_agency`,
+                    SUM(agt.`me_income`) -  @business_cost AS `total_revenue_me`,
+                    fn_formula_getChange(FLOOR( 5 + RAND(DAY(pStart_date)) * 40 ), FLOOR( 5 + RAND(DAY(pEnd_date)) * 40 )) AS `revenue_change`
+            FROM	`agent_ticket` agt
+				JOIN	`agent` ag ON ag.`user_id` = agt.`agent_id`
+                JOIN	`agent_class` agc ON agc.`agent_c2_id` = ag.`user_id`
+                JOIN	`ticket_type` tt ON tt.`id` = agt.`ticket_type`
+			WHERE	ag.`class` = 2
+				AND agc.`agent_c1_id`	=	pAgent_id
+				AND ag.`enable`			=	1
+                AND	agt.`created_date`	BETWEEN	pStart_date	AND pEnd_date
+			GROUP BY agt.`ticket_type`
+			ORDER BY `total_ticket` DESC
+            LIMIT 10;
+        END IF;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_report_total_statistic`( pAccount INT, pStart_date TIMESTAMP, pEnd_date TIMESTAMP, pAgent_id INT )
+BEGIN
+		SET @unit = 10000;
+        SET @business_cost = 0;
+        
+		IF ( pAgent_id = 0 ) THEN
+			SELECT	COUNT(agt.`id`),
+					COALESCE(SUM(agt.`agency_income`), 0),
+					COALESCE(SUM(agt.`me_income`), 0) - @business_cost
+			INTO	@ticket, @revenue_agency, @revenue_me
+			FROM	`agent_ticket` agt
+				JOIN	`agent` ag ON ag.`user_id` = agt.`agent_id`
+			WHERE	ag.`staff_id`	=	pAccount
+				AND ag.`enable`		=	1
+				AND	agt.`created_date`	BETWEEN	pStart_date	AND pEnd_date;
+
+			SELECT	COUNT(ag.`id`)
+            INTO	@location
+            FROM	`agent` ag
+            WHERE	ag.`staff_id`	=	pAccount
+				AND ag.`enable`		=	1
+				AND	ag.`created_date`	BETWEEN	pStart_date	AND pEnd_date;
+
+            SELECT	COUNT(agt.`id`),
+					COALESCE(SUM(agt.`agency_income`), 0),
+					COALESCE(SUM(agt.`me_income`), 0) - @business_cost
+            INTO	@previous_ticket, @previous_revenue_agency, @previous_revenue_me
+			FROM	`agent_ticket` agt
+				JOIN	`agent` ag ON ag.`user_id` = agt.`agent_id`
+			WHERE	ag.`staff_id`	=	pAccount
+				AND ag.`enable`		=	1
+				AND	agt.`created_date`	BETWEEN	DATE_ADD(pStart_date, INTERVAL -30 DAY) AND DATE_ADD(pEnd_date, INTERVAL -30 DAY);
+
+			SELECT	COUNT(ag.`id`)
+            INTO	@previous_location
+            FROM	`agent` ag
+            WHERE	ag.`staff_id`	=	pAccount
+				AND ag.`enable`		=	1
+                AND	ag.`created_date`	BETWEEN	DATE_ADD(pStart_date, INTERVAL -30 DAY) AND DATE_ADD(pEnd_date, INTERVAL -30 DAY);
+		ELSE
+			SELECT	COUNT(agt.`id`),
+					COALESCE(SUM(agt.`agency_income`), 0),
+					COALESCE(SUM(agt.`me_income`), 0) - @business_cost
+			INTO	@ticket, @revenue_agency, @revenue_me
+			FROM	`agent_ticket` agt
+				JOIN	`agent` ag ON ag.`user_id` = agt.`agent_id`
+				JOIN	`agent_class` agc ON agc.`agent_c2_id` = ag.`user_id`
+			WHERE	ag.`class`			=	2
+				AND agc.`agent_c1_id`	=	pAgent_id
+				AND ag.`enable`			=	1
+				AND	agt.`created_date`	BETWEEN	pStart_date	AND pEnd_date;
+
+			SELECT	COUNT(ag.`id`)
+            INTO	@location
+            FROM	`agent` ag
+				JOIN	`agent_class` agc ON agc.`agent_c2_id` = ag.`user_id`
+            WHERE	ag.`class`			=	2
+				AND agc.`agent_c1_id`	=	pAgent_id
+				AND ag.`enable`			=	1
+				AND	ag.`created_date`	BETWEEN	pStart_date	AND pEnd_date;
+
+			SELECT	COUNT(agt.`id`),
+					COALESCE(SUM(agt.`agency_income`), 0),
+					COALESCE(SUM(agt.`me_income`), 0) - @business_cost
+			INTO	@previous_ticket, @previous_revenue_agency, @previous_revenue_me
+			FROM	`agent_ticket` agt
+				JOIN	`agent` ag ON ag.`user_id` = agt.`agent_id`
+				JOIN	`agent_class` agc ON agc.`agent_c2_id` = ag.`user_id`
+			WHERE	ag.`class` = 2
+				AND agc.`agent_c1_id`	=	pAgent_id
+				AND ag.`enable`			=	1
+				AND	agt.`created_date`	BETWEEN	(DATE_ADD(pStart_date, INTERVAL -30 DAY)) AND (DATE_ADD(pEnd_date, INTERVAL -30 DAY));
+
+			SELECT	COUNT(ag.`id`)
+            INTO	@previous_location
+            FROM	`agent` ag
+				JOIN	`agent_class` agc ON agc.`agent_c2_id` = ag.`user_id`
+            WHERE	ag.`class`			=	2
+				AND agc.`agent_c1_id`	=	pAgent_id
+				AND ag.`enable`			=	1
+                AND	ag.`created_date`	BETWEEN	DATE_ADD(pStart_date, INTERVAL -30 DAY) AND DATE_ADD(pEnd_date, INTERVAL -30 DAY);
+		END IF;
+        
+        SET @revenue = @ticket * @unit;
+		SET @previous_revenue = @previous_ticket * @unit;
+        
+        SELECT	@ticket AS 'ticket', @previous_ticket AS 'previous_ticket',
+				fn_formula_getChange(@ticket, @previous_ticket) AS 'ticket_change',
+				@revenue_agency AS 'revenue_agency', @previous_revenue_agency 'previous_revenue_agency',
+                fn_formula_getChange(@revenue_agency, @previous_revenue_agency) AS 'revenue_agency_change',
+                @revenue_me AS 'revenue_me', @previous_revenue_me AS 'previous_revenue_me',
+                fn_formula_getChange(@revenue_me, @previous_revenue_me) AS 'revenue_me_change',
+                @location AS 'location', @previous_location AS 'previous_location',
+                fn_formula_getChange(@location, @previous_location) AS 'location_change';
+	END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_role_checkStaffRole`( pStaff_id BIGINT, pRole VARCHAR(50), OUT pResult TINYINT )
+BEGIN
+		SET @sqls = CONCAT("
+				SET @result = COALESCE((SELECT ur.`role_team_id` FROM `account_role` ur JOIN `role_team` rt ON rt.`id` = ur.`role_team_id`
+								WHERE ur.`account_id` = ", pStaff_id, " AND rt.`role_id` IN (", pRole, ")), 0)");
+		PREPARE stmt FROM @sqls;
+		EXECUTE stmt;
+		DEALLOCATE PREPARE stmt;
+        
+        SET pResult = @result;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_role_getRole`( pAccount INT )
+BEGIN
+		SET		@role_id = COALESCE((SELECT `role_team_id` FROM `account_role` WHERE `account_id` = pAccount), 0);
+		SELECT	r.`id`,
+				r.`name`
+		FROM	`role` r
+        WHERE	`id` >= 4;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_role_getTeamByManager`( pRole_id INT )
+BEGIN
+		SELECT	rt.`id`,
+				rt.`name`
+		FROM	`role_team` rt
+			JOIN	`role` r ON r.`id`	= rt.`role_id`
+		WHERE	rt.`role_manager_id`	=	pRole_id
+			OR	rt.`role_id`			=	pRole_id;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_role_getTeamByRole`( pRole_id INT )
+BEGIN
+		SELECT	rt.`id`,
+				rt.`name`
+		FROM	`role_team` rt
+			JOIN	`role` r ON r.`id` = rt.`role_id`
+		WHERE	rt.`role_id`	=	pRole_id;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_store_type_getBusinessRatioDefault`( pStore_type TINYINT )
+BEGIN
+		SELECT	st.`ratio_default` AS `ratio`
+        FROM	`store_type` st
+        WHERE	st.`id` = pStore_type;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_store_type_list`( )
+BEGIN
+		SELECT	st.`id`,
+				st.`name`
+        FROM	`store_type` st;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_ticket_information_getAllInfo`( )
+BEGIN
+		SELECT	ti.`id` AS `ticket_type`,
+				ti.`price` AS `unit`,
+                DATE_FORMAT(ti.`next_drawing`, '%H:%i %d-%m-%Y') AS `next_drawing`
+		FROM	`ticket_type` ti;
+	END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_ticket_information_getInfoByType`( pType TINYINT )
+BEGIN
+		SELECT	ti.`id` AS `ticket_type`,
+				ti.`price` AS `unit`,
+                DATE_FORMAT(ti.`next_drawing`, '%H:%i %d-%m-%Y') AS `next_drawing`
+		FROM	`ticket_type` ti
+		WHERE	ti.`id`	=	pType;
+	END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_ticket_prize_getPrizeByType`( pType TINYINT )
+BEGIN
+		SELECT	tp.`ticket_type`,
+				tp.`id` AS `prize_id`,
+                tp.`order`,
+				tp.`name`,
+				tp.`prize`,
+                tp.`point`
+		FROM	`ticket_prize` tp;
+	END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_transaction_buyTicket`( pTrans_id BIGINT, pTicket_image VARCHAR(500) )
+BEGIN
+        SELECT	ut.`user_id`,
+				ut.`ticket_type`,
+				ut.`board`
+		INTO	@user_id, @ticket_type, @ticket_num
+        FROM	`user_ticket` ut
+        WHERE	ut.`trans_id` = pTrans_id;
+        
+        SET @unit = (SELECT `price` FROM `ticket_type` WHERE `id` = @ticket_type);
+        
+        START TRANSACTION;
+			SET @pre_value	= COALESCE((SELECT `money` FROM `user_money` WHERE `user_id` = @user_id), 0);
+            SET @unit		= (SELECT `price` FROM `ticket_type` WHERE `id` = @ticket_type);
+            SET @money		= COALESCE(@unit * @ticket_num, 0);
+            
+            IF ( @pre_value < @money ) THEN
+				SELECT -1 AS 'result';
+            ELSE
+				UPDATE	`user_money`
+				SET		`money`			=	@pre_value - @money,
+						`updated_date`	=	CURRENT_TIMESTAMP()
+				WHERE	`user_id`		=	@user_id;
+
+				UPDATE	`user_ticket`
+				SET		`state`			=	1,
+						`ticket_image`	=	pTicket_image
+				WHERE	`trans_id`		=	pTrans_id;
+				
+				UPDATE	`transaction`
+				SET		`state`			=	1,
+						`ticket_image`	=	pTicket_image
+				WHERE	`id`			=	pTrans_id;
+				
+				SELECT	1 AS 'result';
+            END IF;
+        
+        COMMIT;
+		
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_transaction_getBuyTicketCommand`( pAgent_id INT, pUser_id BIGINT, pTicket_type TINYINT, pQuantity SMALLINT, pTicket_data VARCHAR(500) )
+BEGIN
+		START TRANSACTION;
+			SET @pre_value	= COALESCE((SELECT `money` FROM `user_money` WHERE `user_id` = pUser_id), 0);
+            SET @unit		= (SELECT `price` FROM `ticket_type` WHERE `id` = pTicket_type);
+            SET @money		= COALESCE(@unit * pQuantity, 0);
+            SET @trans_id	= 0;
+            
+            IF ( @pre_value < @money ) THEN
+				SELECT -1 AS 'result';
+            ELSE
+				INSERT INTO `transaction`
+				(
+					`user_id`,
+					`reason_id`,
+					`pre_value`,
+					`value`,
+					`description`
+				)
+				VALUES
+				(
+					pUser_id,
+					2,
+					@pre_value,
+					@money,
+					pTicket_data
+				);
+				SET @trans_id = LAST_INSERT_ID();
+				
+				INSERT INTO `transaction_agent`
+				(
+					`trans_id`,
+					`agent_id`,
+					`value`
+				)
+				VALUES
+				(
+					@trans_id,
+					pAgent_id,
+					@money
+				);
+                
+                INSERT INTO `user_ticket`
+				(
+					`user_id`,
+					`ticket_type`,
+					`agent_id`,
+					`board`,
+					`trans_id`,
+                    `ticket_data`
+				)
+				VALUES
+				(
+					pUser_id,
+					pTicket_type,
+					pAgent_id,
+                    pQuantity,
+					@trans_id,
+                    pTicket_data
+				);
+                
+                INSERT INTO `agent_ticket`
+				(
+					`agent_id`,
+					`ticket_type`,
+					`agency_income`,
+					`me_income`,
+                    `trans_id`,
+                    `board`
+				)
+				VALUES
+				(
+					pAgent_id,
+					pTicket_type,
+					FLOOR(@unit * pQuantity * 80 / 100),
+					FLOOR(@unit * pQuantity * 20 / 100),
+                    @trans_id,
+                    pQuantity
+				);
+                
+				SELECT 1 AS 'result', @trans_id AS 'trans_id';
+			END IF;
+        COMMIT;
+	END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_transaction_getCommand`( pUser_id BIGINT, pReason_id TINYINT )
+BEGIN
+		START TRANSACTION;
+			SET @pre_value = COALESCE((SELECT `money` FROM `user_money` WHERE `user_id` = pUser_id), 0);
+			INSERT INTO `transaction`
+			(
+				`user_id`,
+				`reason_id`,
+				`pre_value`
+			)
+			VALUES
+			(
+				pUser_id,
+				pReason_id,
+				@pre_value
+			);
+			SELECT LAST_INSERT_ID() AS 'trans_id';
+        COMMIT;
+	END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_transaction_topupUserMoney`( pOrder_id BIGINT, pUser_id BIGINT, pMoney INT, pDescription VARCHAR(255) )
+BEGIN
+        SET @result = COALESCE((SELECT `id` FROM `payment_order` WHERE `id` = pOrder_id AND `user_id` = pUser_id AND `disable` = 0), -1);
+        IF ( @result > 0 ) THEN
+			
+			START TRANSACTION;
+                
+                SET @pre_value	= COALESCE((SELECT `money` FROM `user_money` WHERE `user_id` = pUser_id), 0);
+                
+                INSERT INTO `transaction`
+				(
+					`user_id`,
+					`reason_id`,
+					`pre_value`,
+					`value`,
+					`state`
+				)
+				VALUES
+				(
+					pUser_id,
+					1,
+					@pre_value,
+					pMoney,
+					1
+				);
+
+				IF ( ROW_COUNT() > 0 ) THEN
+					UPDATE	`payment_order`
+                    SET		`disable`	= 1
+                    WHERE	`id`		= pOrder_id;
+                    
+					UPDATE	`user_money`
+					SET		`money` 	= `money` + pMoney
+					WHERE	`user_id`	= pUser_id;
+                
+					SET @result = 1;
+				ELSE
+					SET @result = 0;
+				END IF;
+                
+                SET @current_money = (SELECT `money` FROM `user_money` WHERE `user_id` = pUser_id);
+			COMMIT;
+		END IF;
+        
+        SELECT @result AS 'result', @current_money AS 'current_money';
+	END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_user_checkMoney`( pUser_id BIGINT, pTicket_type TINYINT, pTicket_no TINYINT )
+BEGIN
+		SET @cost = (SELECT `price` FROM `ticket_type` WHERE `id` = pTicket_type) * pTicket_no;
+        
+        SET	@user_money = COALESCE((SELECT `money` FROM `user_money` WHERE `user_id` = pUser_id), 0);
+        
+        IF ( @cost > @user_money ) THEN
+			SELECT 0 AS 'result';
+        ELSE
+			SELECT 1 AS 'result';
+        END IF;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_user_getDetailsByID`( pUser_id BIGINT )
+BEGIN
+		SELECT 	u.`id` AS `user_id`,
+				u.`username`,
+                u.`full_name`,
+                u.`email`,
+                u.`address`,
+                u.`birthday`,
+                u.`gender`,
+                u.`avatar`,
+                u.`is_online`,
+                u.`user_type`,
+                u.`phone`
+		FROM 	`user` u
+		WHERE 	u.`id` = pUser_id;
+	END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_user_getMoney`( pUser_id BIGINT )
+BEGIN
+		SET	@user_money = COALESCE((SELECT `money` FROM `user_money` WHERE `user_id` = pUser_id), 0);
+        
+        SELECT @user_money AS `money`;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_user_insert`( pUser_id BIGINT, pUsername VARCHAR(100), pPassword VARCHAR(255), pFull_name VARCHAR(200), pAvatar VARCHAR(500), pGender TINYINT, pBirthday DATE, pEmail VARCHAR(255), pPhone VARCHAR(50), pAddress VARCHAR(500), pUser_type TINYINT )
+BEGIN
+		INSERT INTO `vietlott`.`user`
+		(
+			`id`,
+			`username`,
+			`password`,
+			`avatar`,
+			`full_name`,
+            `gender`,
+            `birthday`,
+			`email`,
+			`phone`,
+			`address`
+		)
+		VALUES
+		(
+			pUser_id,
+			pUsername,
+			pPassword,
+			pAvatar,
+			pFull_name,
+            pGender,
+            pBirthday,
+			pEmail,
+			pPhone,
+			pAddress
+		);
+        
+        INSERT INTO `user_money`
+		(
+			`user_id`
+        )
+		VALUES
+		(
+			pUser_id
+		);
+        
+        SELECT ROW_COUNT() AS 'result';
+	END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_user_login`( pUsername VARCHAR(100), pPassword VARCHAR(100) )
+BEGIN
+		IF NOT EXISTS ( SELECT `id` FROM `user` WHERE `username` = pUsername) THEN
+			SELECT -1 AS 'result';
+		ELSEIF NOT EXISTS ( SELECT `id` FROM `user` WHERE `username` = pUsername AND `password` = pPassword) THEN
+			SELECT 0 AS 'result';
+		ELSE
+			SELECT	1 AS `result`,
+					`id` AS `user_id`,
+                    `avatar`,
+                    `full_name`,
+					`user_type`
+			FROM `user`
+			WHERE `username`	= pUsername
+				AND `password`	= pPassword;
+		END IF;
+	END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_user_ticket_getByType`( pUser_id BIGINT, pOffset SMALLINT, pLimit SMALLINT )
+BEGIN
+		SELECT	ut.`user_id`,
+				ag.`name` AS `agent_name`,
+				ut.`ticket_type`,
+				ut.`ticket_number`,
+				ut.`agent_id`,
+				ut.`created_date`,
+				ut.`easy_pick`
+		FROM	`user_ticket` ut
+			JOIN	`agent` ag ON ag.`user_id` = ut.`agent_id`
+        WHERE	ut.`user_id`	=	pUser_id
+			AND ut.`enable`		=	1
+            AND ut.`state`		=	1
+		GROUP BY ut.`ticket_type`, ut.`id`
+        ORDER BY ut.`created_date` DESC
+        LIMIT pOffset, pLimit;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_user_ticket_getByTypeTotal`( pUser_id BIGINT )
+BEGIN
+		SELECT	COUNT(ut.`id`) AS `total`
+		FROM	`user_ticket` ut
+        WHERE	ut.`user_id`	=	pUser_id
+			AND ut.`enable`		=	1
+            AND ut.`state`		=	1;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_user_ticket_insert`( pUser_id BIGINT, pAgent_id INT, pTicket_number VARCHAR(50), pTicket_type TINYINT, pEasy_pick TINYINT )
+BEGIN
+		INSERT INTO `user_ticket`
+		(
+			`user_id`,
+			`ticket_type`,
+			`ticket_number`,
+			`agent_id`,
+			`easy_pick`
+		)
+		VALUES
+		(
+			pUser_id,
+			pTicket_type,
+			pTicket_number,
+			pAgent_id,
+			pEasy_pick
+		);
+        
+        CALL sp_agent_ticket_insert( pAgent_id, pTicket_number, pTicket_type);
+
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_user_updateUserOnlineStatus`( pUser_id BIGINT, pIs_online TINYINT )
+BEGIN
+		UPDATE	`user`
+        SET		`is_online`				=	pIs_online,
+				`last_update_online`	=	NOW()
+        WHERE	`id`					=	pUser_id;
+	END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`khanhdln`@`%` PROCEDURE `sp_version_getNewVersionByPlatform`( pPlatform VARCHAR(50), pType TINYINT )
+BEGIN
+		SELECT		v.`version_id`,
+					v.`name` AS `version_name`,
+                    v.`force_update`
+        FROM		`version` v
+        WHERE		v.`platform`	=	pPlatform
+			AND		v.`type`		=	pType
+		ORDER BY	v.`id` DESC
+        LIMIT 1;
+	END$$
+DELIMITER ;
